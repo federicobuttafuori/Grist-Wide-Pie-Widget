@@ -444,15 +444,6 @@
         return String(meta.id || meta.colId || meta.name || meta.label || "");
       }
 
-      function normalizeLookupKey(value) {
-        return String(value || "")
-          .normalize("NFKC")
-          .replace(/\u200B/g, "")
-          .replace(/\u00A0/g, " ")
-          .trim()
-          .toLowerCase();
-      }
-
       function isPlainObject(value) {
         return !!value && typeof value === "object" && !Array.isArray(value);
       }
@@ -508,46 +499,14 @@
           : record;
         return Object.keys(source)
           .filter((key) => key !== "id" && key !== "fields" && !key.startsWith("_"))
-          .map((key) => {
-            const cleaned = String(key).replace(/\u200B/g, "").trim();
-            return { id: cleaned, label: cleaned, type: "" };
-          });
+          .map((key) => ({ id: key, label: key, type: "" }));
       }
 
       function getRecordValue(record, colId) {
         if (!record || !colId) return undefined;
-        const sources = [record];
-        if (record.fields && typeof record.fields === "object") sources.push(record.fields);
-        if (record.record && typeof record.record === "object") sources.push(record.record);
-        if (record.data && typeof record.data === "object") sources.push(record.data);
-        if (record.values && typeof record.values === "object") sources.push(record.values);
-
-        for (const source of sources) {
-          if (!source || typeof source !== "object") continue;
-          if (Object.prototype.hasOwnProperty.call(source, colId)) return source[colId];
-        }
-
-        const wanted = normalizeLookupKey(colId);
-        for (const source of sources) {
-          if (!source || typeof source !== "object") continue;
-          const keys = Object.keys(source);
-          const matchedKey = keys.find((k) => normalizeLookupKey(k) === wanted);
-          if (matchedKey !== undefined) {
-            return source[matchedKey];
-          }
-        }
-
-        // Last-resort: inspect one nested level for host-specific payload wrappers.
-        for (const source of sources) {
-          if (!source || typeof source !== "object") continue;
-          for (const nestedKey of Object.keys(source)) {
-            const nested = source[nestedKey];
-            if (!nested || typeof nested !== "object" || Array.isArray(nested)) continue;
-            if (Object.prototype.hasOwnProperty.call(nested, colId)) return nested[colId];
-            const nKeys = Object.keys(nested);
-            const matchedNestedKey = nKeys.find((k) => normalizeLookupKey(k) === wanted);
-            if (matchedNestedKey !== undefined) return nested[matchedNestedKey];
-          }
+        if (Object.prototype.hasOwnProperty.call(record, colId)) return record[colId];
+        if (record.fields && typeof record.fields === "object") {
+          return record.fields[colId];
         }
         return undefined;
       }
@@ -638,6 +597,11 @@
           for (const c of candidates) {
             if (includeRx.test(c.label) || includeRx.test(c.id)) resultSet.add(c.key);
           }
+        }
+
+        // UX fallback: with no explicit manual/include selection, default to all numeric columns.
+        if (!hasManual && !hasIncludeRegex) {
+          for (const c of candidates) resultSet.add(c.key);
         }
 
         if (excludeRx) {
@@ -1022,17 +986,10 @@
           const source = (state.activeRecord.fields && typeof state.activeRecord.fields === "object")
             ? state.activeRecord.fields
             : state.activeRecord;
-          const sampleKeys = Object.keys(source).slice(0, 8);
-          const sampleTypes = sampleKeys.map((k) => ({
-            key: k,
-            directType: typeof source[k],
-            resolvedType: typeof getRecordValue(state.activeRecord, k)
-          }));
           debugLog("active record updated", {
             source: sourceTag,
             keys: Object.keys(source).length,
-            sampleKeys,
-            sampleTypes
+            sampleKeys: Object.keys(source).slice(0, 8)
           });
         } else {
           debugLog("active record empty", { source: sourceTag });
