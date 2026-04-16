@@ -140,6 +140,11 @@
       gap: 16px;
       align-items: start;
     }
+    .chart-stage {
+      position: relative;
+      width: 100%;
+      max-width: 420px;
+    }
     #pieCanvas {
       width: 100%;
       max-width: 420px;
@@ -197,10 +202,19 @@
       max-width: min(280px, calc(100vw - 16px));
     }
     .meta {
-      margin: 0 0 10px;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 2;
+      margin: 0;
+      padding: 0 8px 4px 0;
+ 
+      max-width: calc(100% - 12px);
       font-size: 12px;
       color: var(--muted);
       text-align: left;
+      pointer-events: none;
+      text-shadow: 0 0 6px #fff, 0 0 8px #fff;
     }
     .settings-toggle {
       position: fixed;
@@ -355,11 +369,12 @@
 
     <main class="main">
       <div class="chart-wrap">
-        <canvas id="pieCanvas" width="420" height="420"></canvas>
-        <div>
-          <h2 style="margin-top:0;">Legend</h2>
-          <div id="legend" class="legend"></div>
+        <div class="chart-stage">
           <div id="meta" class="meta"></div>
+          <canvas id="pieCanvas" width="420" height="420"></canvas>
+        </div>
+        <div class="legend-column">
+          <div id="legend" class="legend"></div>
         </div>
       </div>
     </main>
@@ -921,6 +936,17 @@
         return "#2563eb";
       }
 
+      /** Same hue as slice fill, darkened for readable labels on the slice. */
+      function sliceLabelColor(hex) {
+        const h = normalizeColor(hex);
+        const n = parseInt(h.slice(1), 16);
+        const r = (n >> 16) & 255;
+        const g = (n >> 8) & 255;
+        const b = n & 255;
+        const k = 0.42;
+        return "rgb(" + Math.round(r * k) + "," + Math.round(g * k) + "," + Math.round(b * k) + ")";
+      }
+
       function renderLegend(rows) {
         if (!rows.length) {
           els.legend.innerHTML = "<div class='hint'>No legend items.</div>";
@@ -954,6 +980,7 @@
         const cy = els.canvas.height / 2;
         const radius = Math.min(cx, cy) - 24;
         let start = -Math.PI / 2;
+        const MIN_PCT_FOR_SLICE_LABEL = 5;
 
         for (const row of rows) {
           const arc = (row.percentage / 100) * Math.PI * 2;
@@ -977,6 +1004,28 @@
             end
           });
           start = end;
+        }
+
+        let labelStart = -Math.PI / 2;
+        for (const row of rows) {
+          const arc = (row.percentage / 100) * Math.PI * 2;
+          const end = labelStart + arc;
+          if (row.percentage >= MIN_PCT_FOR_SLICE_LABEL) {
+            const mid = labelStart + arc / 2;
+            const labelR = radius * 0.58;
+            const lx = cx + Math.cos(mid) * labelR;
+            const ly = cy + Math.sin(mid) * labelR;
+            const pct = row.percentage;
+            const fontSize = Math.max(10, Math.min(22, 8 + pct * 0.38));
+            ctx.save();
+            ctx.fillStyle = sliceLabelColor(row.color);
+            ctx.font = "600 " + fontSize + "px system-ui, Segoe UI, sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(formatNumber(row.value), lx, ly);
+            ctx.restore();
+          }
+          labelStart = end;
         }
       }
 
