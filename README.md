@@ -10,7 +10,7 @@ A single-file HTML **custom widget** for [Grist](https://www.getgrist.com/). It 
 
 | File | Purpose |
 |------|---------|
-| `grist-wide-pie-widget.html` | Full widget (UI, logic, canvas, Grist integration) |
+| `index.html` | Full widget (UI, logic, canvas, Grist integration) |
 | `docs/debug-learnings.md` | Notes on Grist host quirks and historical fixes |
 
 ---
@@ -30,7 +30,7 @@ A single-file HTML **custom widget** for [Grist](https://www.getgrist.com/). It 
 ## Quick start (Grist)
 
 1. Open your Grist document and add a **Custom widget**.
-2. Paste the full contents of `grist-wide-pie-widget.html` into the widget code editor (or upload the file if your deployment supports it).
+2. Paste the full contents of `index.html` into the widget code editor (or upload the file if your deployment supports it).
 3. Point the widget at the target table.
 4. Select a **row** in that table. If no row is selected, there is no active record to visualize.
 

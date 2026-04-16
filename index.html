@@ -441,8 +441,7 @@
         lastAppliedOptionsJson: "",
         optionsApiAvailable: true,
         recordPollTimer: null,
-        lastRenderedSelectedKeysSig: null,
-        debugLegendSampleLogged: false
+        lastRenderedSelectedKeysSig: null
       };
       state.isBuilderHost = window.location.pathname.includes("/grist-widget/custom-widget-builder/");
 
@@ -583,9 +582,6 @@
         }
         return out;
       }
-
-      /** Temporary: set false to silence column-description debug lines */
-      const DEBUG_COLUMN_DESC = false;
 
       function columnDescriptionFromGrist(col) {
         if (!col || typeof col !== "object") return "";
@@ -1054,13 +1050,6 @@
           return;
         }
         els.legend.innerHTML = "";
-        if (DEBUG_COLUMN_DESC && rows.length && !state.debugLegendSampleLogged) {
-          state.debugLegendSampleLogged = true;
-          debugLog("legend hover sample", rows.slice(0, 4).map((r) => ({
-            id: r.columnId,
-            descChars: (typeof r.columnDescription === "string" ? r.columnDescription.length : 0)
-          })));
-        }
         for (const row of rows) {
           const line = document.createElement("div");
           line.className = "legend-row";
@@ -1074,10 +1063,14 @@
           sw.style.background = row.color;
           const name = document.createElement("div");
           name.textContent = row.label;
-          if (desc) name.title = desc;
           const val = document.createElement("div");
           val.className = "legend-value";
           val.textContent = formatNumber(row.value) + " (" + formatPct(row.percentage) + ")";
+          if (desc) {
+            sw.title = desc;
+            name.title = desc;
+            val.title = desc;
+          }
           line.appendChild(sw);
           line.appendChild(name);
           line.appendChild(val);
@@ -1452,107 +1445,56 @@
       }
 
       /**
-       * fetchSelectedTable().tableId may be a string (e.g. T2_Ricette), a single numeric _grist_Tables.id,
-       * or an array of numeric table refs (common in custom-widget-builder). parentId in _grist_Tables_column
-       * matches _grist_Tables.id (numeric), not the string tableId.
+       * Merge column descriptions from `_grist_Tables_column` into `columnsMeta`.
+       * We cannot filter by parentId using fetchSelectedTable().tableId: in the custom-widget-builder
+       * numeric table refs often refer to a different table than the one described by fetchSelectedTable().columns.
+       * Instead we scan all column-definition rows whose colId or label matches the current columnsMeta.
        */
-      function resolveGristTableParentIds(sel, tables) {
-        if (!sel || !tables || !Array.isArray(tables.id) || !Array.isArray(tables.tableId)) return [];
-        const idSet = new Set(tables.id);
-        const raw = sel.tableId != null ? sel.tableId : (sel.table && sel.table.tableId != null ? sel.table.tableId : sel.id);
-        if (Array.isArray(raw)) {
-          return raw.filter((x) => typeof x === "number" && idSet.has(x));
-        }
-        if (typeof raw === "number" && idSet.has(raw)) {
-          return [raw];
-        }
-        if (raw != null && raw !== "") {
-          const ti = tables.tableId.findIndex((t) => String(t) === String(raw));
-          if (ti >= 0) return [tables.id[ti]];
-        }
-        return [];
-      }
-
       async function enrichColumnDescriptionsFromGristMeta() {
         if (!state.hasGrist || !window.grist || !grist.docApi) return;
-        if (typeof grist.docApi.fetchSelectedTable !== "function" || typeof grist.docApi.fetchTable !== "function") {
-          if (DEBUG_COLUMN_DESC) debugLog("column desc: fetchTable/fetchSelectedTable missing");
-          return;
-        }
+        if (typeof grist.docApi.fetchTable !== "function") return;
+        if (!state.columnsMeta.length) return;
         try {
-          const sel = await grist.docApi.fetchSelectedTable();
-          const apiCols = (sel && sel.columns) ? sel.columns : [];
-          if (DEBUG_COLUMN_DESC && apiCols[0]) {
-            debugLog("column desc: fetchSelectedTable column keys", Object.keys(apiCols[0]));
-          }
-          const tables = await grist.docApi.fetchTable("_grist_Tables");
           const columns = await grist.docApi.fetchTable("_grist_Tables_column");
-          if (!tables || !columns || !Array.isArray(tables.tableId) || !Array.isArray(columns.parentId)) {
-            if (DEBUG_COLUMN_DESC) {
-              debugLog("column desc: bad meta tables shape", {
-                tablesKeys: tables ? Object.keys(tables) : [],
-                columnsKeys: columns ? Object.keys(columns) : []
-              });
-            }
-            return;
-          }
-          const parentIds = resolveGristTableParentIds(sel, tables);
-          if (!parentIds.length) {
-            if (DEBUG_COLUMN_DESC) {
-              debugLog("column desc: could not resolve parent id(s)", {
-                selTableId: sel && sel.tableId,
-                selKeys: sel ? Object.keys(sel) : [],
-                sampleTableIds: tables.tableId.slice(0, 8)
-              });
-            }
-            return;
-          }
-          const parentSet = new Set(parentIds);
+          if (!columns || !Array.isArray(columns.parentId)) return;
+          const wantColIds = new Set(state.columnsMeta.map((m) => String(m.id)));
+          const wantLabels = new Set(
+            state.columnsMeta
+              .map((m) => (m.label ? String(m.label).trim().toLowerCase() : ""))
+              .filter(Boolean)
+          );
           const fields = Object.keys(columns);
           const descByColId = {};
+          const descByLabelLower = {};
           const nRows = columns.parentId.length;
           for (let i = 0; i < nRows; i++) {
-            if (!parentSet.has(columns.parentId[i])) continue;
             const row = {};
             for (let j = 0; j < fields.length; j++) {
               const f = fields[j];
               row[f] = columns[f][i];
             }
-            const cid = row.colId;
+            const cid = row.colId != null ? String(row.colId) : "";
+            const labLower = row.label != null ? String(row.label).trim().toLowerCase() : "";
+            const relevant = (cid && wantColIds.has(cid)) || (labLower && wantLabels.has(labLower));
+            if (!relevant) continue;
             const d = descriptionFromGristTablesColumnRow(row);
-            if (cid != null && d) descByColId[String(cid)] = d;
+            if (!d) continue;
+            if (cid) descByColId[cid] = d;
+            if (labLower) descByLabelLower[labLower] = d;
           }
-          let updated = 0;
           state.columnsMeta = state.columnsMeta.map((m) => {
             const idStr = String(m.id);
-            const d = descByColId[idStr];
+            let d = descByColId[idStr];
+            if (!d && m.label) {
+              const lk = String(m.label).trim().toLowerCase();
+              if (lk) d = descByLabelLower[lk];
+            }
             if (!d) return m;
             if (m.description === d) return m;
-            updated += 1;
             return Object.assign({}, m, { description: d });
           });
-          if (DEBUG_COLUMN_DESC) {
-            debugLog("column desc: internal map", {
-              parentIds,
-              internalWithText: Object.keys(descByColId).length,
-              mergedIntoMeta: updated
-            });
-            if (Object.keys(descByColId).length === 0 && nRows > 0) {
-              for (let i = 0; i < nRows; i++) {
-                if (!parentSet.has(columns.parentId[i])) continue;
-                const sample = {};
-                for (let j = 0; j < fields.length; j++) {
-                  const f = fields[j];
-                  sample[f] = columns[f][i];
-                }
-                debugLog("column desc: sample _grist_Tables_column row keys", Object.keys(sample));
-                debugLog("column desc: sample fields snippet", String(sample.fields).slice(0, 240));
-                break;
-              }
-            }
-          }
         } catch (err) {
-          if (DEBUG_COLUMN_DESC) debugLog("column desc: enrich failed", err && err.message ? err.message : String(err));
+          console.warn("enrichColumnDescriptionsFromGristMeta", err);
         }
       }
 
@@ -1564,17 +1506,12 @@
             const cols = (table && table.columns) ? table.columns : [];
             if (cols.length) {
               state.columnsMeta = normalizeMetaFromColumns(cols);
-              if (DEBUG_COLUMN_DESC) {
-                const withD = state.columnsMeta.filter((c) => c.description).length;
-                debugLog("column desc: from API columns", { count: cols.length, withDescription: withD });
-              }
             }
             await enrichColumnDescriptionsFromGristMeta();
             return;
           }
         } catch (err) {
           console.warn("Could not load table metadata via docApi", err);
-          if (DEBUG_COLUMN_DESC) debugLog("column desc: tryLoadColumnsMeta error", err && err.message ? err.message : String(err));
         }
       }
 
