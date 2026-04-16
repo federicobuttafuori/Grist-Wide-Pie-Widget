@@ -1,0 +1,1379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Grist Wide Pie Widget</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --fg: #1f2937;
+      --muted: #6b7280;
+      --border: #d1d5db;
+      --danger: #b91c1c;
+      --danger-bg: #fee2e2;
+      --panel: #f9fafb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, Segoe UI, Arial, sans-serif;
+      color: var(--fg);
+      background: var(--bg);
+    }
+    .app {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      min-height: 100vh;
+    }
+    .app.settings-hidden {
+      grid-template-columns: 1fr;
+    }
+    .panel {
+      border-right: 1px solid var(--border);
+      padding: 12px;
+      overflow: auto;
+      background: var(--panel);
+    }
+    .app.settings-hidden .panel {
+      display: none;
+    }
+    .main {
+      padding: 16px;
+      overflow: auto;
+      position: relative;
+    }
+    h1 {
+      font-size: 16px;
+      margin: 0 0 10px;
+    }
+    h2 {
+      font-size: 13px;
+      margin: 14px 0 8px;
+      color: #111827;
+    }
+    .field { margin-bottom: 8px; }
+    .field label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 7px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fff;
+    }
+    #manualSearch {
+      margin-bottom: 6px;
+    }
+    .hint {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .error {
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--danger);
+      background: var(--danger-bg);
+      padding: 6px 8px;
+      border-radius: 6px;
+    }
+    .columns-box {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      max-height: 260px;
+      overflow: auto;
+      padding: 4px;
+    }
+    .col-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px;
+      border-radius: 6px;
+    }
+    .col-item:hover { background: #f3f4f6; }
+    .col-item label {
+      margin: 0;
+      color: #111827;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .config-list {
+      margin-top: 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      padding: 8px;
+      max-height: 260px;
+      overflow: auto;
+    }
+    .config-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 70px;
+      gap: 6px;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .config-row .name {
+      font-size: 12px;
+      color: #111827;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    input[type="color"] {
+      width: 100%;
+      height: 30px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0;
+      background: #fff;
+    }
+    .chart-wrap {
+      display: grid;
+      grid-template-columns: minmax(260px, 420px) 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+    #pieCanvas {
+      width: 100%;
+      max-width: 420px;
+      aspect-ratio: 1 / 1;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #fff;
+    }
+    .legend {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      padding: 8px;
+    }
+    .legend-row {
+      display: grid;
+      grid-template-columns: 14px 1fr auto;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      padding: 5px 2px;
+      border-bottom: 1px solid #f3f4f6;
+    }
+    .legend-row:last-child { border-bottom: none; }
+    .swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 1px solid rgba(0,0,0,0.12);
+    }
+    .legend-value {
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .tooltip {
+      position: fixed;
+      pointer-events: none;
+      display: none;
+      padding: 6px 8px;
+      border-radius: 6px;
+      background: #111827;
+      color: #fff;
+      font-size: 12px;
+      z-index: 1000;
+      white-space: nowrap;
+    }
+    .meta {
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .settings-toggle {
+      position: fixed;
+      left: 12px;
+      bottom: 12px;
+      z-index: 1100;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.35);
+      color: #111827;
+      font-size: 18px;
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      border-radius: 999px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(2px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    }
+    .settings-toggle:hover {
+      background: rgba(255, 255, 255, 0.55);
+    }
+    .debug-toggle {
+      position: fixed;
+      left: 54px;
+      bottom: 12px;
+      z-index: 1100;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.35);
+      color: #111827;
+      font-size: 16px;
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      border-radius: 999px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(2px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    }
+    .debug-toggle:hover {
+      background: rgba(255, 255, 255, 0.55);
+    }
+    .debug-window {
+      position: fixed;
+      right: 12px;
+      bottom: 12px;
+      width: min(720px, calc(100vw - 24px));
+      max-height: 46vh;
+      z-index: 1200;
+      display: none;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      background: #0b1220;
+      color: #e2e8f0;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+    }
+    .debug-window.visible {
+      display: block;
+    }
+    .debug-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 10px;
+      border-bottom: 1px solid #334155;
+      font-size: 12px;
+    }
+    .debug-actions button {
+      border: 1px solid #475569;
+      border-radius: 6px;
+      background: #1e293b;
+      color: #f8fafc;
+      font-size: 11px;
+      padding: 4px 8px;
+      cursor: pointer;
+    }
+    .debug-body {
+      margin: 0;
+      padding: 10px;
+      overflow: auto;
+      max-height: calc(46vh - 42px);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    @media (max-width: 920px) {
+      .app { grid-template-columns: 1fr; }
+      .panel { border-right: none; border-bottom: 1px solid var(--border); }
+      .chart-wrap { grid-template-columns: 1fr; }
+      #pieCanvas { max-width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="panel">
+      <h1>Wide Row Pie</h1>
+      <div class="field">
+        <label for="includeRegex">Include regex (optional)</label>
+        <input id="includeRegex" type="text" placeholder="^cost_" />
+        <div class="hint">Match column names to include.</div>
+        <div id="includeRegexError" class="error" style="display:none;"></div>
+      </div>
+      <div class="field">
+        <label for="excludeRegex">Exclude regex (optional)</label>
+        <input id="excludeRegex" type="text" placeholder="_tmp$" />
+        <div class="hint">Applied after manual + include matches.</div>
+        <div id="excludeRegexError" class="error" style="display:none;"></div>
+      </div>
+      <div class="field">
+        <label for="numberPrefix">Legend number prefix</label>
+        <input id="numberPrefix" type="text" placeholder="€" />
+        <div class="hint">Shown before numeric values (legend and tooltip).</div>
+      </div>
+      <div class="field">
+        <label for="numberDecimals">Legend decimals</label>
+        <input id="numberDecimals" type="text" placeholder="2" />
+        <div class="hint">Use values from 0 to 6.</div>
+      </div>
+
+      <h2>Manual Column Selection</h2>
+      <input id="manualSearch" type="text" placeholder="Search columns..." />
+      <div id="manualColumns" class="columns-box"></div>
+
+      <h2>Labels and Colors (selected only)</h2>
+      <div id="selectedConfig" class="config-list"></div>
+    </aside>
+
+    <main class="main">
+      <div class="chart-wrap">
+        <canvas id="pieCanvas" width="420" height="420"></canvas>
+        <div>
+          <h2 style="margin-top:0;">Legend</h2>
+          <div id="legend" class="legend"></div>
+          <div id="meta" class="meta"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+  <button id="settingsToggle" class="settings-toggle" type="button" title="Hide settings" aria-label="Toggle settings">⚙</button>
+  <button id="debugToggle" class="debug-toggle" type="button" title="Show debug logs" aria-label="Show debug logs">🐞</button>
+  <section id="debugWindow" class="debug-window" aria-live="polite">
+    <div class="debug-header">
+      <strong>Debug Logs</strong>
+      <div class="debug-actions">
+        <button id="copyDebugLog" type="button">Copy log</button>
+        <button id="clearDebugLog" type="button">Clear</button>
+      </div>
+    </div>
+    <pre id="debugOutput" class="debug-body"></pre>
+  </section>
+  <div id="tooltip" class="tooltip"></div>
+
+  <script>
+    (function () {
+      const DEFAULT_COLORS = [
+        "#2563eb", "#dc2626", "#16a34a", "#ca8a04", "#7c3aed",
+        "#0f766e", "#c2410c", "#be185d", "#4b5563", "#1d4ed8",
+        "#b91c1c", "#15803d"
+      ];
+
+      const state = {
+        activeRecord: null,
+        columnsMeta: [],
+        config: {
+          manualSelections: [],
+          includeRegex: "",
+          excludeRegex: "",
+          numberPrefix: "",
+          numberDecimals: 2,
+          customLabels: {},
+          customColors: {}
+        },
+        validationErrors: { includeRegex: "", excludeRegex: "" },
+        selectedColumnsResolved: [],
+        orphanSelections: [],
+        pieData: [],
+        pieGeometry: [],
+        manualSearch: "",
+        settingsVisible: true,
+        hasGrist: typeof window.grist !== "undefined",
+        isSavingOptions: false,
+        isApplyingRemoteOptions: false,
+        lastSavedOptionsJson: "",
+        lastAppliedOptionsJson: "",
+        optionsApiAvailable: true,
+        recordPollTimer: null
+      };
+      state.isBuilderHost = window.location.pathname.includes("/grist-widget/custom-widget-builder/");
+
+      const els = {
+        app: document.querySelector(".app"),
+        includeRegex: document.getElementById("includeRegex"),
+        excludeRegex: document.getElementById("excludeRegex"),
+        numberPrefix: document.getElementById("numberPrefix"),
+        numberDecimals: document.getElementById("numberDecimals"),
+        includeRegexError: document.getElementById("includeRegexError"),
+        excludeRegexError: document.getElementById("excludeRegexError"),
+        manualSearch: document.getElementById("manualSearch"),
+        manualColumns: document.getElementById("manualColumns"),
+        selectedConfig: document.getElementById("selectedConfig"),
+        canvas: document.getElementById("pieCanvas"),
+        legend: document.getElementById("legend"),
+        meta: document.getElementById("meta"),
+        tooltip: document.getElementById("tooltip"),
+        settingsToggle: document.getElementById("settingsToggle"),
+        debugToggle: document.getElementById("debugToggle"),
+        debugWindow: document.getElementById("debugWindow"),
+        debugOutput: document.getElementById("debugOutput"),
+        copyDebugLog: document.getElementById("copyDebugLog"),
+        clearDebugLog: document.getElementById("clearDebugLog")
+      };
+
+      const ctx = els.canvas.getContext("2d");
+      const DEBUG_ENABLED = true;
+      const debugLines = [];
+      const MAX_DEBUG_LINES = 500;
+      function debugLog(message, data) {
+        if (!DEBUG_ENABLED) return;
+        const ts = new Date().toISOString().split("T")[1].replace("Z", "");
+        let line = "[" + ts + "] " + message;
+        if (data !== undefined) {
+          try {
+            line += " | " + (typeof data === "string" ? data : JSON.stringify(data));
+          } catch (err) {
+            line += " | [unserializable]";
+          }
+        }
+        debugLines.push(line);
+        if (debugLines.length > MAX_DEBUG_LINES) debugLines.shift();
+        if (els.debugOutput) {
+          els.debugOutput.textContent = debugLines.join("\n");
+          els.debugOutput.scrollTop = els.debugOutput.scrollHeight;
+        }
+        if (data === undefined) {
+          console.log("🧪 [WidePie]", message);
+          return;
+        }
+        console.log("🧪 [WidePie]", message, data);
+      }
+
+      function makeColumnKey(meta) {
+        if (!meta) return "";
+        return String(meta.id || meta.colId || meta.name || meta.label || "");
+      }
+
+      function normalizeLookupKey(value) {
+        return String(value || "")
+          .normalize("NFKC")
+          .replace(/\u200B/g, "")
+          .replace(/\u00A0/g, " ")
+          .trim()
+          .toLowerCase();
+      }
+
+      function isPlainObject(value) {
+        return !!value && typeof value === "object" && !Array.isArray(value);
+      }
+
+      function buildSerializableConfig() {
+        return {
+          manualSelections: sanitizeManualSelections(state.config.manualSelections),
+          includeRegex: typeof state.config.includeRegex === "string" ? state.config.includeRegex : "",
+          excludeRegex: typeof state.config.excludeRegex === "string" ? state.config.excludeRegex : "",
+          numberPrefix: typeof state.config.numberPrefix === "string" ? state.config.numberPrefix : "",
+          numberDecimals: sanitizeDecimals(state.config.numberDecimals),
+          customLabels: isPlainObject(state.config.customLabels) ? state.config.customLabels : {},
+          customColors: isPlainObject(state.config.customColors) ? state.config.customColors : {}
+        };
+      }
+
+      function sanitizeDecimals(value) {
+        const n = Number.parseInt(value, 10);
+        if (!Number.isFinite(n)) return 2;
+        return Math.min(6, Math.max(0, n));
+      }
+
+      function sanitizeManualSelections(input) {
+        if (!Array.isArray(input)) return [];
+        const out = [];
+        for (const item of input) {
+          if (typeof item === "string" && item.trim()) {
+            out.push({ key: item.trim(), name: item.trim() });
+            continue;
+          }
+          if (item && typeof item === "object") {
+            const key = typeof item.key === "string" ? item.key.trim() : "";
+            const name = typeof item.name === "string" ? item.name.trim() : "";
+            if (key || name) out.push({ key, name: name || key });
+          }
+        }
+        return out;
+      }
+
+      function normalizeMetaFromColumns(columns) {
+        if (!Array.isArray(columns)) return [];
+        return columns.map((col) => {
+          const id = col.id || col.colId || col.name || col.label;
+          const label = col.label || col.name || col.colId || String(id);
+          return { id, label, type: col.type || "" };
+        }).filter((x) => x.id);
+      }
+
+      function buildMetaFromRecord(record) {
+        if (!record || typeof record !== "object") return [];
+        const source = (record.fields && typeof record.fields === "object" && !Array.isArray(record.fields))
+          ? record.fields
+          : record;
+        return Object.keys(source)
+          .filter((key) => key !== "id" && key !== "fields" && !key.startsWith("_"))
+          .map((key) => {
+            const cleaned = String(key).replace(/\u200B/g, "").trim();
+            return { id: cleaned, label: cleaned, type: "" };
+          });
+      }
+
+      function getRecordValue(record, colId) {
+        if (!record || !colId) return undefined;
+        const sources = [record];
+        if (record.fields && typeof record.fields === "object") sources.push(record.fields);
+        if (record.record && typeof record.record === "object") sources.push(record.record);
+        if (record.data && typeof record.data === "object") sources.push(record.data);
+        if (record.values && typeof record.values === "object") sources.push(record.values);
+
+        for (const source of sources) {
+          if (!source || typeof source !== "object") continue;
+          if (Object.prototype.hasOwnProperty.call(source, colId)) return source[colId];
+        }
+
+        const wanted = normalizeLookupKey(colId);
+        for (const source of sources) {
+          if (!source || typeof source !== "object") continue;
+          const keys = Object.keys(source);
+          const matchedKey = keys.find((k) => normalizeLookupKey(k) === wanted);
+          if (matchedKey !== undefined) {
+            return source[matchedKey];
+          }
+        }
+
+        // Last-resort: inspect one nested level for host-specific payload wrappers.
+        for (const source of sources) {
+          if (!source || typeof source !== "object") continue;
+          for (const nestedKey of Object.keys(source)) {
+            const nested = source[nestedKey];
+            if (!nested || typeof nested !== "object" || Array.isArray(nested)) continue;
+            if (Object.prototype.hasOwnProperty.call(nested, colId)) return nested[colId];
+            const nKeys = Object.keys(nested);
+            const matchedNestedKey = nKeys.find((k) => normalizeLookupKey(k) === wanted);
+            if (matchedNestedKey !== undefined) return nested[matchedNestedKey];
+          }
+        }
+        return undefined;
+      }
+
+      function syncColumnsMetaWithRecord(record) {
+        const fromRecord = buildMetaFromRecord(record);
+        if (!fromRecord.length) return;
+        const current = new Map(state.columnsMeta.map((m) => [String(m.id), m]));
+        for (const m of fromRecord) {
+          if (!current.has(String(m.id))) current.set(String(m.id), m);
+        }
+        state.columnsMeta = Array.from(current.values());
+      }
+
+      function isLikelyNumericColumn(meta, record) {
+        if (!meta || !record) return false;
+        const t = String(meta.type || "").toLowerCase();
+        if (t.includes("numeric") || t.includes("int") || t.includes("float") || t.includes("number")) {
+          return true;
+        }
+        const raw = getRecordValue(record, meta.id);
+        if (raw === null || raw === undefined || raw === "") return true;
+        if (typeof raw === "number") return Number.isFinite(raw);
+        if (typeof raw === "string") return normalizeNumber(raw) !== null;
+        return false;
+      }
+
+      function parseRegexOrError(source, fieldName) {
+        if (!source || !source.trim()) return null;
+        try {
+          return new RegExp(source);
+        } catch (err) {
+          state.validationErrors[fieldName] = "Invalid regex: " + err.message;
+          return "__invalid__";
+        }
+      }
+
+      function clearRegexErrors() {
+        state.validationErrors.includeRegex = "";
+        state.validationErrors.excludeRegex = "";
+      }
+
+      function showRegexErrors() {
+        const inc = state.validationErrors.includeRegex;
+        const exc = state.validationErrors.excludeRegex;
+        els.includeRegexError.style.display = inc ? "block" : "none";
+        els.includeRegexError.textContent = inc || "";
+        els.excludeRegexError.style.display = exc ? "block" : "none";
+        els.excludeRegexError.textContent = exc || "";
+      }
+
+      function getResolvedColumns() {
+        const record = state.activeRecord;
+        if (!record) return { resolved: [], blockedByRegexError: false };
+
+        clearRegexErrors();
+        const includeRx = parseRegexOrError(state.config.includeRegex, "includeRegex");
+        const excludeRx = parseRegexOrError(state.config.excludeRegex, "excludeRegex");
+        showRegexErrors();
+        if (includeRx === "__invalid__" || excludeRx === "__invalid__") {
+          return { resolved: [], blockedByRegexError: true };
+        }
+
+        const candidates = state.columnsMeta
+          .filter((m) => isLikelyNumericColumn(m, record))
+          .map((m) => ({ key: makeColumnKey(m), label: m.label || m.id, id: m.id }));
+
+        const byKey = new Map(candidates.map((c) => [c.key, c]));
+        const resultSet = new Set();
+        const hasManual = Array.isArray(state.config.manualSelections) && state.config.manualSelections.length > 0;
+        const hasIncludeRegex = !!(state.config.includeRegex && state.config.includeRegex.trim());
+
+        for (const saved of state.config.manualSelections || []) {
+          const key = typeof saved === "string" ? saved : (saved && saved.key);
+          const fallbackName = saved && saved.name;
+          if (!key && !fallbackName) continue;
+          if (key && byKey.has(key)) {
+            resultSet.add(key);
+            continue;
+          }
+          if (fallbackName) {
+            const match = candidates.find((c) => c.label === fallbackName || c.id === fallbackName);
+            if (match) resultSet.add(match.key);
+          }
+        }
+
+        if (includeRx) {
+          for (const c of candidates) {
+            if (includeRx.test(c.label) || includeRx.test(c.id)) resultSet.add(c.key);
+          }
+        }
+
+        if (excludeRx) {
+          for (const c of candidates) {
+            if (!resultSet.has(c.key)) continue;
+            if (excludeRx.test(c.label) || excludeRx.test(c.id)) resultSet.delete(c.key);
+          }
+        }
+
+        const resolved = Array.from(resultSet)
+          .map((key) => byKey.get(key))
+          .filter(Boolean);
+        debugLog("selection pipeline", {
+          candidates: candidates.length,
+          manualSelections: (state.config.manualSelections || []).length,
+          includeRegex: state.config.includeRegex || "",
+          excludeRegex: state.config.excludeRegex || "",
+          resolved: resolved.length
+        });
+        return {
+          resolved,
+          blockedByRegexError: false
+        };
+      }
+
+      function normalizeNumber(value) {
+        if (value === null || value === undefined) return null;
+        if (typeof value === "number") return Number.isFinite(value) ? value : null;
+        if (typeof value === "boolean") return null;
+        if (Array.isArray(value)) {
+          // Common Grist reference shape: [id, label] is not a numeric measure.
+          if (value.length === 2 && typeof value[0] === "number" && typeof value[1] === "string") return null;
+          if (value.length === 1) return normalizeNumber(value[0]);
+          return null;
+        }
+        if (typeof value === "object") {
+          // Try common wrappers used by APIs/formatters.
+          if (Object.prototype.hasOwnProperty.call(value, "raw")) return normalizeNumber(value.raw);
+          if (Object.prototype.hasOwnProperty.call(value, "value")) return normalizeNumber(value.value);
+          if (Object.prototype.hasOwnProperty.call(value, "amount")) return normalizeNumber(value.amount);
+          return null;
+        }
+        if (typeof value === "string") {
+          const trimmed = value.trim().replace(/\u00A0/g, " "); // NBSP
+          if (!trimmed) return null;
+          const parenNegative = /^\(.*\)$/.test(trimmed);
+          // Remove currency/labels and keep digits, separators, and sign.
+          let cleaned = trimmed.replace(/[^\d.,+\-'’]/g, "");
+          if (!cleaned) return null;
+          cleaned = cleaned.replace(/['’]/g, "");
+          if (parenNegative) cleaned = "-" + cleaned.replace(/[()]/g, "");
+
+          const hasComma = cleaned.includes(",");
+          const hasDot = cleaned.includes(".");
+
+          // If both separators exist, treat the last one as decimal separator.
+          if (hasComma && hasDot) {
+            const lastComma = cleaned.lastIndexOf(",");
+            const lastDot = cleaned.lastIndexOf(".");
+            if (lastComma > lastDot) {
+              cleaned = cleaned.replace(/\./g, "");
+              cleaned = cleaned.replace(",", ".");
+            } else {
+              cleaned = cleaned.replace(/,/g, "");
+            }
+          } else if (hasComma) {
+            // Single comma: decimal separator.
+            cleaned = cleaned.replace(/\./g, "");
+            cleaned = cleaned.replace(",", ".");
+          } else {
+            // Dot only: remove grouping commas if any.
+            cleaned = cleaned.replace(/,/g, "");
+          }
+
+          const parsed = Number(cleaned);
+          return Number.isFinite(parsed) ? parsed : null;
+        }
+        return null;
+      }
+
+      function buildPieData(resolvedCols) {
+        const rows = [];
+        const rec = state.activeRecord || {};
+        let invalidCount = 0;
+        let zeroCount = 0;
+        const invalidSamples = [];
+        for (const col of resolvedCols) {
+          const rawValue = getRecordValue(rec, col.id);
+          const n = normalizeNumber(rawValue);
+          if (n === null) {
+            invalidCount += 1;
+            if (invalidSamples.length < 8) {
+              invalidSamples.push({
+                colId: col.id,
+                rawType: rawValue === null ? "null" : typeof rawValue,
+                rawPreview: String(rawValue).slice(0, 80)
+              });
+            }
+            continue;
+          }
+          if (n === 0) {
+            zeroCount += 1;
+            continue;
+          }
+          rows.push({
+            key: col.key,
+            columnId: col.id,
+            label: state.config.customLabels[col.key] || col.label || col.id,
+            value: n,
+            color: state.config.customColors[col.key] || colorForKey(col.key)
+          });
+        }
+        const total = rows.reduce((sum, row) => sum + row.value, 0);
+        for (const row of rows) {
+          row.percentage = total > 0 ? (row.value / total) * 100 : 0;
+        }
+        debugLog("pie data build", {
+          resolvedCols: resolvedCols.length,
+          validRows: rows.length,
+          invalidValues: invalidCount,
+          zeroValues: zeroCount,
+          total,
+          invalidSamples
+        });
+        return { rows, total };
+      }
+
+      function buildAllNumericCandidatesForRecord() {
+        const record = state.activeRecord;
+        if (!record) return [];
+        return state.columnsMeta
+          .filter((m) => isLikelyNumericColumn(m, record))
+          .map((m) => ({ key: makeColumnKey(m), label: m.label || m.id, id: m.id }));
+      }
+
+      function colorForKey(key) {
+        let hash = 0;
+        for (let i = 0; i < key.length; i += 1) hash = ((hash << 5) - hash) + key.charCodeAt(i);
+        const idx = Math.abs(hash) % DEFAULT_COLORS.length;
+        return DEFAULT_COLORS[idx];
+      }
+
+      function formatNumber(n) {
+        const decimals = sanitizeDecimals(state.config.numberDecimals);
+        const prefix = typeof state.config.numberPrefix === "string" ? state.config.numberPrefix : "";
+        const formatted = new Intl.NumberFormat(undefined, {
+          minimumFractionDigits: decimals,
+          maximumFractionDigits: decimals
+        }).format(n);
+        return prefix + formatted;
+      }
+
+      function formatPct(n) {
+        return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(n) + "%";
+      }
+
+      function renderManualSelection() {
+        const candidates = state.columnsMeta
+          .filter((m) => isLikelyNumericColumn(m, state.activeRecord))
+          .map((m) => ({ key: makeColumnKey(m), label: m.label || m.id, id: m.id }));
+        const selectedSet = new Set((state.config.manualSelections || []).map((s) => s && s.key).filter(Boolean));
+        const searchNeedle = state.manualSearch.trim().toLowerCase();
+        const filteredCandidates = searchNeedle
+          ? candidates.filter((c) => String(c.label).toLowerCase().includes(searchNeedle) || String(c.id).toLowerCase().includes(searchNeedle))
+          : candidates;
+
+        if (!candidates.length) {
+          els.manualColumns.innerHTML = "<div class='hint'>No numeric columns detected for this record.</div>";
+          return;
+        }
+        if (!filteredCandidates.length) {
+          els.manualColumns.innerHTML = "<div class='hint'>No columns match the search.</div>";
+          return;
+        }
+
+        els.manualColumns.innerHTML = "";
+        for (const col of filteredCandidates) {
+          const row = document.createElement("div");
+          row.className = "col-item";
+          const input = document.createElement("input");
+          input.type = "checkbox";
+          input.checked = selectedSet.has(col.key);
+          input.addEventListener("change", () => {
+            updateManualSelection(col, input.checked);
+          });
+          const label = document.createElement("label");
+          label.textContent = col.label;
+          row.appendChild(input);
+          row.appendChild(label);
+          els.manualColumns.appendChild(row);
+        }
+      }
+
+      function updateManualSelection(col, checked) {
+        const next = Array.isArray(state.config.manualSelections) ? [...state.config.manualSelections] : [];
+        const i = next.findIndex((x) => x && x.key === col.key);
+        if (checked && i < 0) next.push({ key: col.key, name: col.label });
+        if (!checked && i >= 0) next.splice(i, 1);
+        state.config.manualSelections = next;
+        persistOptions();
+        recomputeAndRender();
+      }
+
+      function renderSelectedConfig() {
+        const selected = state.selectedColumnsResolved || [];
+        if (!selected.length) {
+          els.selectedConfig.innerHTML = "<div class='hint'>Select at least one column first.</div>";
+          return;
+        }
+
+        els.selectedConfig.innerHTML = "";
+        for (const col of selected) {
+          const row = document.createElement("div");
+          row.className = "config-row";
+
+          const name = document.createElement("div");
+          name.className = "name";
+          name.textContent = col.label;
+
+          const labelInput = document.createElement("input");
+          labelInput.type = "text";
+          labelInput.placeholder = "Custom label";
+          labelInput.value = state.config.customLabels[col.key] || "";
+          labelInput.addEventListener("change", () => {
+            const val = labelInput.value.trim();
+            if (val) state.config.customLabels[col.key] = val;
+            else delete state.config.customLabels[col.key];
+            persistOptions();
+            recomputeAndRender();
+          });
+
+          const colorInput = document.createElement("input");
+          colorInput.type = "color";
+          colorInput.value = normalizeColor(state.config.customColors[col.key] || colorForKey(col.key));
+          colorInput.addEventListener("change", () => {
+            state.config.customColors[col.key] = colorInput.value;
+            persistOptions();
+            recomputeAndRender();
+          });
+
+          row.appendChild(name);
+          row.appendChild(labelInput);
+          row.appendChild(colorInput);
+          els.selectedConfig.appendChild(row);
+        }
+      }
+
+      function normalizeColor(value) {
+        if (typeof value !== "string") return "#2563eb";
+        if (/^#[0-9a-fA-F]{6}$/.test(value)) return value;
+        return "#2563eb";
+      }
+
+      function renderLegend(rows) {
+        if (!rows.length) {
+          els.legend.innerHTML = "<div class='hint'>No legend items.</div>";
+          return;
+        }
+        els.legend.innerHTML = "";
+        for (const row of rows) {
+          const line = document.createElement("div");
+          line.className = "legend-row";
+          const sw = document.createElement("div");
+          sw.className = "swatch";
+          sw.style.background = row.color;
+          const name = document.createElement("div");
+          name.textContent = row.label;
+          const val = document.createElement("div");
+          val.className = "legend-value";
+          val.textContent = formatNumber(row.value) + " (" + formatPct(row.percentage) + ")";
+          line.appendChild(sw);
+          line.appendChild(name);
+          line.appendChild(val);
+          els.legend.appendChild(line);
+        }
+      }
+
+      function renderPie(rows) {
+        state.pieGeometry = [];
+        ctx.clearRect(0, 0, els.canvas.width, els.canvas.height);
+        if (!rows.length) return;
+
+        const cx = els.canvas.width / 2;
+        const cy = els.canvas.height / 2;
+        const radius = Math.min(cx, cy) - 24;
+        let start = -Math.PI / 2;
+
+        for (const row of rows) {
+          const arc = (row.percentage / 100) * Math.PI * 2;
+          const end = start + arc;
+          ctx.beginPath();
+          ctx.moveTo(cx, cy);
+          ctx.arc(cx, cy, radius, start, end);
+          ctx.closePath();
+          ctx.fillStyle = row.color;
+          ctx.fill();
+          ctx.strokeStyle = "#fff";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
+          state.pieGeometry.push({
+            ...row,
+            cx,
+            cy,
+            radius,
+            start,
+            end
+          });
+          start = end;
+        }
+      }
+
+      function pointInsideSlice(x, y, g) {
+        const dx = x - g.cx;
+        const dy = y - g.cy;
+        const dist = Math.sqrt((dx * dx) + (dy * dy));
+        if (dist > g.radius) return false;
+        let ang = Math.atan2(dy, dx);
+        if (ang < -Math.PI / 2) ang += Math.PI * 2;
+        let s = g.start;
+        let e = g.end;
+        if (s < -Math.PI / 2) s += Math.PI * 2;
+        if (e < -Math.PI / 2) e += Math.PI * 2;
+        if (e < s) e += Math.PI * 2;
+        if (ang < s) ang += Math.PI * 2;
+        return ang >= s && ang <= e;
+      }
+
+      function wireTooltip() {
+        els.canvas.addEventListener("mousemove", (evt) => {
+          const rect = els.canvas.getBoundingClientRect();
+          const x = (evt.clientX - rect.left) * (els.canvas.width / rect.width);
+          const y = (evt.clientY - rect.top) * (els.canvas.height / rect.height);
+          const hit = state.pieGeometry.find((g) => pointInsideSlice(x, y, g));
+          if (!hit) {
+            els.tooltip.style.display = "none";
+            return;
+          }
+          els.tooltip.style.display = "block";
+          els.tooltip.textContent = hit.label + " | " + formatNumber(hit.value) + " | " + formatPct(hit.percentage);
+          els.tooltip.style.left = (evt.clientX + 12) + "px";
+          els.tooltip.style.top = (evt.clientY + 12) + "px";
+        });
+        els.canvas.addEventListener("mouseleave", () => {
+          els.tooltip.style.display = "none";
+        });
+      }
+
+      function renderStatus(_message) {}
+
+      async function refreshRecordFromDocApi(tag) {
+        if (!window.grist || !grist.docApi || typeof grist.docApi.fetchSelectedRecord !== "function") {
+          return false;
+        }
+        try {
+          const rec = await grist.docApi.fetchSelectedRecord();
+          if (!rec) {
+            return false;
+          }
+          const nextCore = (rec.fields && typeof rec.fields === "object") ? rec.fields : rec;
+          const prevCore = state.activeRecord
+            ? ((state.activeRecord.fields && typeof state.activeRecord.fields === "object") ? state.activeRecord.fields : state.activeRecord)
+            : null;
+          const nextJson = JSON.stringify(nextCore);
+          const prevJson = prevCore ? JSON.stringify(prevCore) : "";
+          if (!state.activeRecord || nextJson !== prevJson) {
+            adoptActiveRecord(rec, "docApi:" + tag);
+            recomputeAndRender();
+          }
+          return true;
+        } catch (err) {
+          console.error("refreshRecordFromDocApi failed", err);
+          return false;
+        }
+      }
+
+      function adoptActiveRecord(record, sourceTag) {
+        state.activeRecord = record || null;
+        if (state.activeRecord) {
+          if (!state.columnsMeta.length) state.columnsMeta = buildMetaFromRecord(state.activeRecord);
+          else syncColumnsMetaWithRecord(state.activeRecord);
+          const source = (state.activeRecord.fields && typeof state.activeRecord.fields === "object")
+            ? state.activeRecord.fields
+            : state.activeRecord;
+          const sampleKeys = Object.keys(source).slice(0, 8);
+          const sampleTypes = sampleKeys.map((k) => ({
+            key: k,
+            directType: typeof source[k],
+            resolvedType: typeof getRecordValue(state.activeRecord, k)
+          }));
+          debugLog("active record updated", {
+            source: sourceTag,
+            keys: Object.keys(source).length,
+            sampleKeys,
+            sampleTypes
+          });
+        } else {
+          debugLog("active record empty", { source: sourceTag });
+        }
+      }
+
+      function applyLoadedOptions(options) {
+        const incoming = (options && typeof options === "object") ? options : {};
+        const customLabels = isPlainObject(incoming.customLabels) ? incoming.customLabels : {};
+        const customColors = isPlainObject(incoming.customColors) ? incoming.customColors : {};
+        const nextConfig = {
+          manualSelections: sanitizeManualSelections(incoming.manualSelections),
+          includeRegex: typeof incoming.includeRegex === "string" ? incoming.includeRegex : "",
+          excludeRegex: typeof incoming.excludeRegex === "string" ? incoming.excludeRegex : "",
+          numberPrefix: typeof incoming.numberPrefix === "string" ? incoming.numberPrefix : "",
+          numberDecimals: sanitizeDecimals(incoming.numberDecimals),
+          customLabels,
+          customColors
+        };
+        const nextJson = JSON.stringify(nextConfig);
+        if (nextJson === state.lastAppliedOptionsJson) return;
+        state.isApplyingRemoteOptions = true;
+        state.config = nextConfig;
+        state.lastAppliedOptionsJson = nextJson;
+        els.includeRegex.value = state.config.includeRegex;
+        els.excludeRegex.value = state.config.excludeRegex;
+        els.numberPrefix.value = state.config.numberPrefix;
+        els.numberDecimals.value = String(state.config.numberDecimals);
+        state.isApplyingRemoteOptions = false;
+      }
+
+      let saveTimer = null;
+      function persistOptions() {
+        if (!state.hasGrist || !window.grist || typeof grist.setOptions !== "function") return;
+        if (!state.optionsApiAvailable) return;
+        if (state.isBuilderHost) return;
+        if (state.isApplyingRemoteOptions) return;
+        const payload = buildSerializableConfig();
+        const payloadJson = JSON.stringify(payload);
+        if (payloadJson === state.lastSavedOptionsJson) return;
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => {
+          if (state.isSavingOptions) return;
+          state.isSavingOptions = true;
+          debugLog("persistOptions -> setOptions calling");
+          Promise.resolve(grist.setOptions(payload))
+            .then(() => {
+              state.lastSavedOptionsJson = payloadJson;
+            })
+            .catch((err) => {
+              const msg = String(err && err.message ? err.message : err || "");
+              if (msg.toLowerCase().includes("unknown interface")) {
+                state.optionsApiAvailable = false;
+              }
+              console.error("Failed to save options", err);
+            })
+            .finally(() => {
+              state.isSavingOptions = false;
+            });
+        }, 300);
+      }
+
+      function reconcileManualSelectionsWithCurrentColumns() {
+        const validKeys = new Set(state.columnsMeta.map((m) => makeColumnKey(m)));
+        const next = [];
+        const orphanSelections = [];
+        for (const sel of state.config.manualSelections || []) {
+          if (!sel) continue;
+          const key = typeof sel === "string" ? sel : sel.key;
+          const name = typeof sel === "string" ? sel : sel.name;
+          if (key && validKeys.has(key)) {
+            next.push(typeof sel === "string" ? { key, name: key } : sel);
+            continue;
+          }
+          if (name) {
+            const byName = state.columnsMeta.find((m) => m.id === name || m.label === name);
+            if (byName) {
+              next.push({ key: makeColumnKey(byName), name: byName.label });
+            } else {
+              orphanSelections.push(name);
+            }
+          } else if (key) {
+            orphanSelections.push(key);
+          }
+        }
+        state.orphanSelections = orphanSelections;
+        const old = JSON.stringify(state.config.manualSelections || []);
+        const now = JSON.stringify(next);
+        if (old !== now) {
+          state.config.manualSelections = next;
+          persistOptions();
+        }
+      }
+
+      function recomputeAndRender() {
+        try {
+          if (!state.activeRecord) {
+            debugLog("render aborted: no activeRecord");
+            renderStatus("Waiting for active record...");
+            renderLegend([]);
+            renderPie([]);
+            els.meta.textContent = "";
+            renderManualSelection();
+            renderSelectedConfig();
+            return;
+          }
+
+          reconcileManualSelectionsWithCurrentColumns();
+          const resolution = getResolvedColumns();
+          state.selectedColumnsResolved = resolution.resolved;
+          renderManualSelection();
+          renderSelectedConfig();
+
+          if (resolution.blockedByRegexError) {
+            debugLog("render aborted: regex error");
+            renderStatus("Fix regex errors to compute the chart.");
+            renderLegend([]);
+            renderPie([]);
+            els.meta.textContent = "";
+            return;
+          }
+
+          if (!resolution.resolved.length) {
+            debugLog("render aborted: zero resolved columns");
+            renderStatus("No columns selected after manual + include - exclude filters.");
+            renderLegend([]);
+            renderPie([]);
+            els.meta.textContent = "";
+            return;
+          }
+
+          const result = buildPieData(resolution.resolved);
+          state.pieData = result.rows;
+          if (!result.rows.length) {
+            const fallbackCandidates = buildAllNumericCandidatesForRecord();
+            const fallbackResult = buildPieData(fallbackCandidates);
+            if (fallbackResult.rows.length) {
+              debugLog("fallback applied: all numeric columns", {
+                fallbackCandidates: fallbackCandidates.length,
+                fallbackRows: fallbackResult.rows.length
+              });
+              state.pieData = fallbackResult.rows;
+              renderPie(fallbackResult.rows);
+              renderLegend(fallbackResult.rows);
+              els.meta.textContent = "Total: " + formatNumber(fallbackResult.total) + " | Auto fallback: all numeric columns";
+              return;
+            }
+
+            debugLog("render aborted: zero valid pie rows");
+            renderStatus("All selected values are empty, non-numeric, null, or zero.");
+            renderLegend([]);
+            renderPie([]);
+            els.meta.textContent = "";
+            return;
+          }
+
+          renderStatus("Showing " + result.rows.length + " categories from active record.");
+          renderPie(result.rows);
+          renderLegend(result.rows);
+          debugLog("render success", { slices: result.rows.length, total: result.total });
+          const orphanInfo = state.orphanSelections.length
+            ? " | Orphan manual selections: " + state.orphanSelections.join(", ")
+            : "";
+          els.meta.textContent = "Total: " + formatNumber(result.total) + orphanInfo;
+        } catch (err) {
+          console.error("Widget render error", err);
+          renderStatus("Widget error: " + (err && err.message ? err.message : "Unknown error"));
+          renderLegend([]);
+          renderPie([]);
+          els.meta.textContent = "";
+        }
+      }
+
+      async function tryLoadColumnsMeta() {
+        if (!state.hasGrist || !window.grist) return;
+        if (state.isBuilderHost) {
+          return;
+        }
+        try {
+          if (grist.docApi && typeof grist.docApi.fetchSelectedTable === "function") {
+            const table = await grist.docApi.fetchSelectedTable();
+            const cols = (table && table.columns) ? table.columns : [];
+            if (cols.length) {
+              state.columnsMeta = normalizeMetaFromColumns(cols);
+              return;
+            }
+          }
+        } catch (err) {
+          console.warn("Could not load table metadata via docApi", err);
+        }
+      }
+
+      function wireInputs() {
+        els.includeRegex.addEventListener("input", () => {
+          state.config.includeRegex = els.includeRegex.value;
+          persistOptions();
+          recomputeAndRender();
+        });
+        els.excludeRegex.addEventListener("input", () => {
+          state.config.excludeRegex = els.excludeRegex.value;
+          persistOptions();
+          recomputeAndRender();
+        });
+        els.numberPrefix.addEventListener("input", () => {
+          state.config.numberPrefix = els.numberPrefix.value;
+          persistOptions();
+          recomputeAndRender();
+        });
+        els.numberDecimals.addEventListener("input", () => {
+          state.config.numberDecimals = sanitizeDecimals(els.numberDecimals.value);
+          els.numberDecimals.value = String(state.config.numberDecimals);
+          persistOptions();
+          recomputeAndRender();
+        });
+        els.manualSearch.addEventListener("input", () => {
+          state.manualSearch = els.manualSearch.value || "";
+          renderManualSelection();
+        });
+        els.settingsToggle.addEventListener("click", () => {
+          state.settingsVisible = !state.settingsVisible;
+          els.app.classList.toggle("settings-hidden", !state.settingsVisible);
+          const nextTitle = state.settingsVisible ? "Hide settings" : "Show settings";
+          els.settingsToggle.title = nextTitle;
+          els.settingsToggle.setAttribute("aria-label", nextTitle);
+        });
+        els.debugToggle.addEventListener("click", () => {
+          const next = !els.debugWindow.classList.contains("visible");
+          els.debugWindow.classList.toggle("visible", next);
+          els.debugToggle.title = next ? "Hide debug logs" : "Show debug logs";
+          els.debugToggle.setAttribute("aria-label", els.debugToggle.title);
+        });
+        els.copyDebugLog.addEventListener("click", async () => {
+          const text = debugLines.join("\n");
+          try {
+            await navigator.clipboard.writeText(text);
+            debugLog("debug log copied");
+          } catch (err) {
+            debugLog("copy failed", err && err.message ? err.message : String(err));
+          }
+        });
+        els.clearDebugLog.addEventListener("click", () => {
+          debugLines.length = 0;
+          if (els.debugOutput) els.debugOutput.textContent = "";
+          debugLog("debug log cleared");
+        });
+      }
+
+      function wireGrist() {
+        if (!state.hasGrist || !window.grist) {
+          debugLog("grist missing on wireGrist");
+          renderStatus("Grist API not found. Open this file as a Grist custom widget.");
+          return;
+        }
+        try {
+          grist.ready({ requiredAccess: "read table" });
+          debugLog("grist.ready ok");
+        } catch (err) {
+          console.warn("grist.ready failed, continuing in safe mode", err);
+          debugLog("grist.ready failed", err && err.message ? err.message : String(err));
+          renderStatus("Grist host handshake delayed. Retrying automatically...");
+          return;
+        }
+
+        if (typeof grist.onOptions === "function") {
+          if (!state.isBuilderHost) {
+            grist.onOptions((options) => {
+              debugLog("onOptions event");
+              applyLoadedOptions(options || {});
+              recomputeAndRender();
+            });
+          } else {
+            state.optionsApiAvailable = false;
+          }
+        } else {
+          state.optionsApiAvailable = false;
+        }
+
+        if (typeof grist.onRecord === "function") {
+          grist.onRecord((record) => {
+            debugLog("onRecord event", { hasRecord: !!record });
+            adoptActiveRecord(record, "onRecord");
+            recomputeAndRender();
+          });
+        }
+
+        if (typeof grist.onRecords === "function") {
+          grist.onRecords((records) => {
+            const list = Array.isArray(records) ? records : [];
+            debugLog("onRecords event", { count: list.length });
+            const first = list.length > 0 ? list[0] : null;
+            adoptActiveRecord(first, "onRecords");
+            recomputeAndRender();
+          });
+        }
+      }
+
+      async function init() {
+        if (state.isBuilderHost) {
+          state.optionsApiAvailable = false;
+        }
+        wireInputs();
+        wireTooltip();
+        wireGrist();
+        await tryLoadColumnsMeta();
+        recomputeAndRender();
+        if (state.isBuilderHost) {
+          debugLog("builder mode polling enabled");
+          await refreshRecordFromDocApi("init-builder");
+          if (state.recordPollTimer) clearInterval(state.recordPollTimer);
+          state.recordPollTimer = setInterval(() => {
+            refreshRecordFromDocApi("poll-builder");
+          }, 1200);
+        }
+      }
+      function waitForGristAndInit() {
+        if (window.grist && typeof window.grist.ready === "function") {
+          state.hasGrist = true;
+          init();
+          return;
+        }
+        state.hasGrist = false;
+        renderStatus("Waiting for Grist host...");
+        let attempts = 0;
+        const maxAttempts = 40;
+        const timer = setInterval(() => {
+          attempts += 1;
+          if (window.grist && typeof window.grist.ready === "function") {
+            clearInterval(timer);
+            state.hasGrist = true;
+            init();
+            return;
+          }
+          if (attempts >= maxAttempts) {
+            clearInterval(timer);
+            renderStatus("Grist API unavailable. Open this file inside Grist custom widget.");
+          }
+        }, 250);
+      }
+
+      waitForGristAndInit();
+    })();
+  </script>
+</body>
+</html>
