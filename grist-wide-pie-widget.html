@@ -267,10 +267,11 @@
     }
     .debug-window {
       position: fixed;
+      top: 12px;
       right: 12px;
-      bottom: 12px;
+      bottom: auto;
       width: min(720px, calc(100vw - 24px));
-      max-height: 46vh;
+      max-height: 38vh;
       z-index: 1200;
       display: none;
       border: 1px solid #cbd5e1;
@@ -311,11 +312,21 @@
       padding: 4px 8px;
       cursor: pointer;
     }
+    .debug-summary {
+      margin: 0;
+      padding: 8px 10px;
+      border-bottom: 1px solid #334155;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #cbd5e1;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
     .debug-body {
       margin: 0;
       padding: 10px;
       overflow: auto;
-      max-height: calc(46vh - 42px);
+      max-height: min(200px, calc(38vh - 100px));
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 11px;
       line-height: 1.45;
@@ -390,6 +401,7 @@
         <button id="closeDebugLog" type="button" aria-label="Close debug logs" title="Close debug logs">X</button>
       </div>
     </div>
+    <div id="debugSummary" class="debug-summary"></div>
     <pre id="debugOutput" class="debug-body"></pre>
   </section>
   <div id="tooltip" class="tooltip"></div>
@@ -452,6 +464,7 @@
         debugToggle: document.getElementById("debugToggle"),
         debugWindow: document.getElementById("debugWindow"),
         debugHeader: document.querySelector(".debug-header"),
+        debugSummary: document.getElementById("debugSummary"),
         debugOutput: document.getElementById("debugOutput"),
         copyDebugLog: document.getElementById("copyDebugLog"),
         clearDebugLog: document.getElementById("clearDebugLog"),
@@ -461,7 +474,7 @@
       const ctx = els.canvas.getContext("2d");
       const DEBUG_ENABLED = true;
       const debugLines = [];
-      const MAX_DEBUG_LINES = 500;
+      const MAX_DEBUG_LINES = 120;
       function debugLog(message, data) {
         if (!DEBUG_ENABLED) return;
         const ts = new Date().toISOString().split("T")[1].replace("Z", "");
@@ -479,6 +492,31 @@
           els.debugOutput.textContent = debugLines.join("\n");
           els.debugOutput.scrollTop = els.debugOutput.scrollHeight;
         }
+      }
+
+      function updateDebugSummary() {
+        if (!els.debugSummary) return;
+        const persist = state.isBuilderHost ? "localStorage" : (state.optionsApiAvailable ? "setOptions" : "off");
+        const rid = state.activeRecord ? getRecordRowId(state.activeRecord) : null;
+        const resolved = (state.selectedColumnsResolved || []).length;
+        const meta = state.columnsMeta.length;
+        const rows = state.pieData || [];
+        const total = rows.reduce((s, r) => s + (Number(r.value) || 0), 0);
+        let chartLine = "Chart —";
+        if (!state.activeRecord) {
+          chartLine = "Chart — (waiting for row)";
+        } else if (rows.length) {
+          chartLine = "Chart " + rows.length + " slices · total " + formatNumber(total);
+        } else if (resolved) {
+          chartLine = "Chart — (no numeric slices)";
+        } else {
+          chartLine = "Chart — (no columns selected)";
+        }
+        els.debugSummary.textContent = [
+          (state.isBuilderHost ? "Builder" : "Page") + " · options " + persist,
+          "Row " + (rid != null && rid !== undefined ? String(rid) : "—") + " · " + resolved + " in pie · " + meta + " cols in meta",
+          chartLine
+        ].join("\n");
       }
 
       function makeColumnKey(meta) {
@@ -1287,6 +1325,7 @@
 
       function recomputeAndRender() {
         try {
+          state.pieData = [];
           if (!state.activeRecord) {
             renderStatus("Waiting for active record...");
             renderLegend([]);
@@ -1342,6 +1381,9 @@
           renderLegend([]);
           renderPie([]);
           els.meta.textContent = "";
+          debugLog("render error", err && err.message ? err.message : String(err));
+        } finally {
+          updateDebugSummary();
         }
       }
 
@@ -1403,9 +1445,13 @@
           els.debugWindow.classList.toggle("visible", next);
           els.debugToggle.title = next ? "Hide debug logs" : "Show debug logs";
           els.debugToggle.setAttribute("aria-label", els.debugToggle.title);
+          if (next) updateDebugSummary();
         });
         els.copyDebugLog.addEventListener("click", async () => {
-          const text = debugLines.join("\n");
+          const header = els.debugSummary && els.debugSummary.textContent
+            ? els.debugSummary.textContent + "\n---\n"
+            : "";
+          const text = header + debugLines.join("\n");
           try {
             await navigator.clipboard.writeText(text);
           } catch (err) {
