@@ -1,49 +1,78 @@
 # Grist Wide Pie Widget
 
-A single-file HTML **custom widget** for [Grist](https://www.getgrist.com/). It draws a **pie chart** from the **active row** (wide layout), using the numeric columns you select.
+**What problem it solves:** Grist tables are often **wide**—many numeric measures live as **columns on one row**. Most chart defaults assume **long** data (one measure per row). This widget maps the **active row** to a pie so you can compare slice shares (e.g. cost breakdown) **without pivoting** the sheet or maintaining helper tables.
+
+A single-file HTML **custom widget** for [Grist](https://www.getgrist.com/). It draws a **pie chart** from the **active row** (wide layout), using the numeric columns you select. It is designed for “one record at a time” analysis: each chosen numeric column in the current row becomes a slice.
+
+---
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `grist-wide-pie-widget.html` | Full widget (UI, logic, canvas) |
+| `grist-wide-pie-widget.html` | Full widget (UI, logic, canvas, Grist integration) |
 | `docs/debug-learnings.md` | Notes on Grist host quirks and historical fixes |
 
-## Installing in Grist
+---
 
-1. Open a Grist document and add a **Custom widget**.
-2. Paste the contents of `grist-wide-pie-widget.html` into the widget editor (or upload the file if your Grist build supports it).
-3. Point the widget at the right table and ensure a **row is selected** (active record).
+## What this widget does
 
-## Features
+- Reads the **active record** from Grist.
+- Detects numeric columns and lets you choose which to include (manual list, include regex, exclude regex).
+- Skips empty, null, non-numeric, and **zero** values.
+- Draws a pie on `<canvas>` with legend, hover tooltip, optional on-slice labels (name), and a **total** overlaid at the top-left of the chart.
+- **Labels and colors:** per selected column, optional custom label and color.
+- **Number formatting:** prefix and decimals for legend and tooltip; percentages with one decimal place in the tooltip.
+- **Column descriptions:** when Grist exposes them (including via internal metadata), legend rows can show the description on hover.
 
-- **Column selection**
-  - Manual checkboxes over detected “numeric” columns.
-  - Optional **include regex**: adds columns whose name matches.
-  - Optional **exclude regex**: removes from the current set.
-- **Values**: skips empty, non-numeric, null, and zero.
-- **Labels and colors**: per selected column, custom label and color.
-- **Number formatting**: prefix and decimals for legend / tooltip values.
-- **Total**: overlaid at the top-left of the chart (does not consume layout space).
-- **On-slice labels**: for slices above a minimum size (percentage threshold), column name in a darker tint of the slice color with a light drop shadow.
-- **Slice tooltip** on hover: name, value, percentage (percentage shown with one decimal place).
+---
+
+## Quick start (Grist)
+
+1. Open your Grist document and add a **Custom widget**.
+2. Paste the full contents of `grist-wide-pie-widget.html` into the widget code editor (or upload the file if your deployment supports it).
+3. Point the widget at the target table.
+4. Select a **row** in that table. If no row is selected, there is no active record to visualize.
+
+---
+
+## Configuration
+
+- **Manual selection** — checkbox list of detected numeric columns.
+- **Include regex** — auto-include columns whose name matches.
+- **Exclude regex** — remove matching columns from the current set.
+- **Per-column** — custom label and color for selected columns.
+- **Number format** — legend/tooltip prefix and decimal places.
+- **On-slice labels** — shown when the slice is large enough (minimum percent threshold); uses column name styling.
+
+---
 
 ## Persisting settings
 
-- **Grist document**: when available, options are saved with `grist.setOptions` and restored with `grist.onOptions`.
-- **Custom widget builder**: `setOptions` may be unreliable; the widget also uses **`localStorage`** (`grist-wide-pie-widget:options:v1`) so settings survive pasting new code into the builder.
+1. **Primary:** Grist document options (`grist.setOptions` / `grist.onOptions`) when available.
+2. **Fallback:** browser `localStorage` key `grist-wide-pie-widget:options:v1` — especially useful in the **Custom Widget Builder**, where `setOptions` can be unreliable while you paste new code.
 
-## Behavior in the builder
+---
 
-In Grist’s custom widget builder, the active row may arrive via **polling** (`fetchSelectedRecord`). The widget **merges** snapshots for the same row so `undefined` cells do not overwrite already valid data (avoids chart flicker).
+## Behavior in the Custom Widget Builder
 
-See `docs/debug-learnings.md` for details.
+The active row may arrive via **events** and/or **polling** (`fetchSelectedRecord`). The widget **merges** snapshots for the same row so partial records with `undefined` cells do not overwrite already valid values (avoids chart flicker). See `docs/debug-learnings.md` for details.
+
+---
 
 ## Debug
 
-When the settings panel is open, a debug button opens a log window with **Copy** / **Clear**, draggable via the header, and closable with **X**.
+When the settings panel is open, a debug button opens a log window with **Copy** / **Clear**, draggable header, and close (**X**). The panel shows a short **summary** (host, row, column counts, chart state) plus a small rolling log for errors.
+
+---
 
 ## Requirements
 
-- Grist with the widget API (`grist.ready`, read access to the table).
-- A modern browser with canvas and `localStorage` (for the builder fallback).
+- Grist with the widget API (`grist.ready`, read access to the table) and custom widget support.
+- A modern browser with Canvas and `localStorage` (for the builder fallback).
+
+---
+
+## Development notes
+
+- The widget is intentionally a **single HTML file** for easy copy/paste into Grist.
