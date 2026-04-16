@@ -220,7 +220,8 @@
       position: fixed;
       left: 12px;
       bottom: 12px;
-      z-index: 1100;
+      z-index: 1300;
+      pointer-events: auto;
       border: 1px solid var(--border);
       background: rgba(255, 255, 255, 0.35);
       color: #111827;
@@ -243,7 +244,8 @@
       position: fixed;
       left: 54px;
       bottom: 12px;
-      z-index: 1100;
+      z-index: 1300;
+      pointer-events: auto;
       border: 1px solid var(--border);
       background: rgba(255, 255, 255, 0.35);
       color: #111827;
@@ -442,7 +444,9 @@
         lastSavedOptionsJson: "",
         lastAppliedOptionsJson: "",
         optionsApiAvailable: true,
-        lastRenderedSelectedKeysSig: null
+        lastRenderedSelectedKeysSig: null,
+        /** Prevents duplicate addEventListener if init runs more than once. */
+        inputsWired: false
       };
       state.isBuilderHost = window.location.pathname.includes("/grist-widget/custom-widget-builder/");
 
@@ -1488,17 +1492,25 @@
 
       async function tryLoadColumnsMeta() {
         if (!state.hasGrist || !window.grist) return;
+        const deadline = Date.now() + 8000;
+        while (Date.now() < deadline) {
+          if (grist.docApi && typeof grist.docApi.fetchSelectedTable === "function") break;
+          await new Promise((r) => setTimeout(r, 40));
+        }
         try {
-          if (grist.docApi && typeof grist.docApi.fetchSelectedTable === "function") {
-            const table = await grist.docApi.fetchSelectedTable();
-            const cols = (table && table.columns) ? table.columns : [];
-            if (cols.length) {
-              state.columnsMeta = normalizeMetaFromColumns(cols);
-              gristTablesColumnCache = null;
-            }
-            await enrichColumnDescriptionsFromGristMeta();
+          if (!grist.docApi || typeof grist.docApi.fetchSelectedTable !== "function") {
+            console.warn("Wide Pie: grist.docApi.fetchSelectedTable still unavailable after wait");
             return;
           }
+          const table = await grist.docApi.fetchSelectedTable();
+          const cols = (table && table.columns) ? table.columns : [];
+          if (cols.length) {
+            state.columnsMeta = normalizeMetaFromColumns(cols);
+            gristTablesColumnCache = null;
+          }
+          void enrichColumnDescriptionsFromGristMeta().then(() => {
+            recomputeAndRender();
+          });
         } catch (err) {
           console.warn("Could not load table metadata via docApi", err);
         }
@@ -1514,6 +1526,8 @@
       }
 
       function wireInputs() {
+        if (state.inputsWired) return;
+        state.inputsWired = true;
         els.includeRegex.addEventListener("input", () => {
           state.config.includeRegex = els.includeRegex.value;
           persistOptions();
@@ -1582,7 +1596,8 @@
           return;
         }
         try {
-          grist.ready({ requiredAccess: "read table" });
+          /* "full" needed for docApi.fetchTable on _grist_* metadata; matches typical production custom widgets. */
+          grist.ready({ requiredAccess: "full" });
         } catch (err) {
           console.warn("grist.ready failed, continuing in safe mode", err);
           renderStatus("Grist host handshake delayed. Retrying automatically...");

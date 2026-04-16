@@ -68,7 +68,7 @@ When the settings panel is open, a debug button opens a log window with **Copy**
 
 ## Requirements
 
-- Grist with the widget API (`grist.ready`, read access to the table) and custom widget support.
+- Grist with the widget API (`grist.ready` with **`requiredAccess: "full"`** so `docApi` can load table metadata and internal `_grist_*` tables for column descriptions) and custom widget support.
 - A modern browser with Canvas and `localStorage` (for the builder fallback).
 
 ---
