@@ -144,9 +144,9 @@
       width: 100%;
       max-width: 420px;
       aspect-ratio: 1 / 1;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      background: #fff;
+      border: none;
+      border-radius: 0;
+      background: transparent;
     }
     .legend {
       border: 1px solid var(--border);
@@ -156,7 +156,7 @@
     }
     .legend-row {
       display: grid;
-      grid-template-columns: 14px 1fr auto;
+      grid-template-columns: 14px minmax(0, 1fr) auto;
       align-items: center;
       gap: 8px;
       font-size: 13px;
@@ -173,6 +173,14 @@
     .legend-value {
       color: var(--muted);
       font-variant-numeric: tabular-nums;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .legend-row > div:nth-child(2) {
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .tooltip {
       position: fixed;
@@ -189,9 +197,10 @@
       max-width: min(280px, calc(100vw - 16px));
     }
     .meta {
-      margin-top: 10px;
+      margin: 0 0 10px;
       font-size: 12px;
       color: var(--muted);
+      text-align: left;
     }
     .settings-toggle {
       position: fixed;
@@ -323,6 +332,15 @@
         <div class="hint">Applied after manual + include matches.</div>
         <div id="excludeRegexError" class="error" style="display:none;"></div>
       </div>
+
+      <h2>Manual Column Selection</h2>
+      <input id="manualSearch" type="text" placeholder="Search columns..." />
+      <div id="manualColumns" class="columns-box"></div>
+
+      <h2>Labels and Colors (selected only)</h2>
+      <div id="selectedConfig" class="config-list"></div>
+
+      <h2>Number Formatting</h2>
       <div class="field">
         <label for="numberPrefix">Legend number prefix</label>
         <input id="numberPrefix" type="text" placeholder="€" />
@@ -333,13 +351,6 @@
         <input id="numberDecimals" type="text" placeholder="2" />
         <div class="hint">Use values from 0 to 6.</div>
       </div>
-
-      <h2>Manual Column Selection</h2>
-      <input id="manualSearch" type="text" placeholder="Search columns..." />
-      <div id="manualColumns" class="columns-box"></div>
-
-      <h2>Labels and Colors (selected only)</h2>
-      <div id="selectedConfig" class="config-list"></div>
     </aside>
 
     <main class="main">
@@ -375,6 +386,7 @@
         "#0f766e", "#c2410c", "#be185d", "#4b5563", "#1d4ed8",
         "#b91c1c", "#15803d"
       ];
+      const LOCAL_OPTIONS_KEY = "grist-wide-pie-widget:options:v1";
 
       const state = {
         activeRecord: null,
@@ -472,6 +484,26 @@
           customLabels: isPlainObject(state.config.customLabels) ? state.config.customLabels : {},
           customColors: isPlainObject(state.config.customColors) ? state.config.customColors : {}
         };
+      }
+
+      function loadLocalOptions() {
+        try {
+          const raw = window.localStorage.getItem(LOCAL_OPTIONS_KEY);
+          if (!raw) return null;
+          const parsed = JSON.parse(raw);
+          if (!parsed || typeof parsed !== "object") return null;
+          return parsed;
+        } catch (err) {
+          return null;
+        }
+      }
+
+      function saveLocalOptions(payload) {
+        try {
+          window.localStorage.setItem(LOCAL_OPTIONS_KEY, JSON.stringify(payload));
+        } catch (err) {
+          // Ignore storage errors in private mode/quota scenarios.
+        }
       }
 
       function sanitizeDecimals(value) {
@@ -786,7 +818,10 @@
       }
 
       function formatPct(n) {
-        return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(n) + "%";
+        return new Intl.NumberFormat(undefined, {
+          minimumFractionDigits: 1,
+          maximumFractionDigits: 1
+        }).format(n) + "%";
       }
 
       function renderManualSelection() {
@@ -1116,13 +1151,20 @@
 
       let saveTimer = null;
       function persistOptions() {
-        if (!state.hasGrist || !window.grist || typeof grist.setOptions !== "function") return;
-        if (!state.optionsApiAvailable) return;
-        if (state.isBuilderHost) return;
         if (state.isApplyingRemoteOptions) return;
         const payload = buildSerializableConfig();
         const payloadJson = JSON.stringify(payload);
         if (payloadJson === state.lastSavedOptionsJson) return;
+
+        if (state.isBuilderHost) {
+          saveLocalOptions(payload);
+          state.lastSavedOptionsJson = payloadJson;
+          return;
+        }
+
+        if (!state.hasGrist || !window.grist || typeof grist.setOptions !== "function") return;
+        if (!state.optionsApiAvailable) return;
+
         clearTimeout(saveTimer);
         saveTimer = setTimeout(() => {
           if (state.isSavingOptions) return;
@@ -1360,6 +1402,8 @@
       async function init() {
         if (state.isBuilderHost) {
           state.optionsApiAvailable = false;
+          const localOptions = loadLocalOptions();
+          if (localOptions) applyLoadedOptions(localOptions);
         }
         wireInputs();
         wireTooltip();
