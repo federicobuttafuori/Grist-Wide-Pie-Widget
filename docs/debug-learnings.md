@@ -27,8 +27,8 @@ Questi cambiamenti aiutavano a diagnosticare o mitigare, ma non eliminavano la s
 - Introduzione merge record per stessa riga (`mergeGristRecords`):
   - se `id` riga è uguale, i campi `undefined` del nuovo snapshot non sovrascrivono i valori già validi.
   - i campi definiti continuano ad aggiornarsi normalmente.
-- `adoptActiveRecord` usa sempre il merge, anche per eventi/polling.
-- Polling builder mantenuto come fallback affidabile, senza più degradare lo stato.
+- `adoptActiveRecord` usa sempre il merge sugli eventi (`onRecord` / `onRecords`).
+- In passato era presente anche polling `fetchSelectedRecord` nel builder; è stato rimosso in favore del solo modello a eventi (meno RPC/console).
 - Rimosso comportamento non desiderato di auto-selezione iniziale "tutte le colonne" e relativo fallback render.
 
 ## Nota di apprendimento per agenti futuri
@@ -60,3 +60,7 @@ Le descrizioni delle colonne definite in Grist non comparivano al passaggio del 
 ### Nota di apprendimento per agenti futuri
 - In Grist, **`fetchSelectedTable().tableId` e l’elenco `columns` non sono una garanzia univoca** di quale `parentId` in `_grist_Tables_column` sia “la stessa tabella” in tutti gli host (in particolare nel builder). Per metadati colonna **per `colId`**, è più affidabile **filtrare per identificatore colonna** (e opzionalmente label) piuttosto che per tabella interna dedotta da `tableId`.
 - Se i log mostrano descrizioni internal su colonne che non compaiono nel grafico e **meta** con tutt’altri `id`, sospettare subito **disallineamento di tabella/parent**, non solo rename o assenza di testo in Grist.
+- **Traffico WebSocket / console:** non schedulare `fetchTable("_grist_Tables_column")` (tabella molto grande) ad ogni cambio riga o tick di polling. Le descrizioni sono **schema**, non valori di riga: basta arricchire dopo `fetchSelectedTable().columns`, al primo bootstrap da record, o quando compaiono **nuovi** `colId` in meta. In cache la risposta per la vita del widget (invalidare se ricarichi le colonne da API).
+
+### Perché altri widget grafici “non aggiornano sempre” e vanno lo stesso
+Molti widget si limitano a **`grist.onRecord`** (o equivalente) e ridisegnano quando **cambia la riga o i dati**. Il Wide Pie ora segue lo stesso modello (**solo eventi**, niente `setInterval` + `fetchSelectedRecord`). Non accoppiare fetch ripetuti su **tabelle interne** grosse al refresh riga: la console e il server si riempiono di RPC e compaiono warning tipo `RPC_UNKNOWN_REQID` (race tra risposte e nuove richieste).

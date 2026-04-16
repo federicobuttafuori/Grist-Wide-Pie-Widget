@@ -414,6 +414,8 @@
         "#b91c1c", "#15803d"
       ];
       const LOCAL_OPTIONS_KEY = "grist-wide-pie-widget:options:v1";
+      /** One fetch per widget lifetime; `_grist_Tables_column` is large and descriptions are schema data. */
+      let gristTablesColumnCache = null;
 
       const state = {
         activeRecord: null,
@@ -440,7 +442,6 @@
         lastSavedOptionsJson: "",
         lastAppliedOptionsJson: "",
         optionsApiAvailable: true,
-        recordPollTimer: null,
         lastRenderedSelectedKeysSig: null
       };
       state.isBuilderHost = window.location.pathname.includes("/grist-widget/custom-widget-builder/");
@@ -708,14 +709,21 @@
         return outFlat;
       }
 
+      /** @returns {number} how many new column ids were merged in */
       function syncColumnsMetaWithRecord(record) {
         const fromRecord = buildMetaFromRecord(record);
-        if (!fromRecord.length) return;
+        if (!fromRecord.length) return 0;
         const current = new Map(state.columnsMeta.map((m) => [String(m.id), m]));
+        let added = 0;
         for (const m of fromRecord) {
-          if (!current.has(String(m.id))) current.set(String(m.id), m);
+          const k = String(m.id);
+          if (!current.has(k)) {
+            current.set(k, m);
+            added += 1;
+          }
         }
         state.columnsMeta = Array.from(current.values());
+        return added;
       }
 
       function isLikelyNumericColumn(meta, record) {
@@ -975,7 +983,7 @@
         return (resolved || []).map((c) => c.key).sort().join("|");
       }
 
-      /** Avoid rebuilding label/color inputs on every record refresh (polling); only when selection changes. */
+      /** Avoid rebuilding label/color inputs on every record update; only when selection changes. */
       function maybeRenderSelectedConfig(resolved) {
         const sig = selectedColumnsKeysSignature(resolved);
         if (sig === state.lastRenderedSelectedKeysSig) return;
@@ -1251,37 +1259,15 @@
         window.addEventListener("touchend", onEnd);
       }
 
-      async function refreshRecordFromDocApi(tag) {
-        if (!window.grist || !grist.docApi || typeof grist.docApi.fetchSelectedRecord !== "function") {
-          return false;
-        }
-        try {
-          const rec = await grist.docApi.fetchSelectedRecord();
-          if (!rec) {
-            return false;
-          }
-          const nextCore = getRecordFieldObject(rec) || rec;
-          const prevCore = state.activeRecord ? (getRecordFieldObject(state.activeRecord) || state.activeRecord) : null;
-          const nextJson = JSON.stringify(nextCore);
-          const prevJson = prevCore ? JSON.stringify(prevCore) : "";
-          if (!state.activeRecord || nextJson !== prevJson) {
-            adoptActiveRecord(rec);
-            recomputeAndRender();
-          }
-          return true;
-        } catch (err) {
-          // Builder RPC can intermittently fail; keep last good record instead of flashing empty UI.
-          debugLog("polling error", err && err.message ? err.message : String(err));
-          return false;
-        }
-      }
-
       function adoptActiveRecord(record) {
         state.activeRecord = record ? mergeGristRecords(state.activeRecord, record) : null;
-        if (state.activeRecord) {
-          if (!state.columnsMeta.length) state.columnsMeta = buildMetaFromRecord(state.activeRecord);
-          else syncColumnsMetaWithRecord(state.activeRecord);
+        if (!state.activeRecord) return;
+        if (!state.columnsMeta.length) {
+          state.columnsMeta = buildMetaFromRecord(state.activeRecord);
           scheduleColumnDescriptionEnrich();
+        } else {
+          const added = syncColumnsMetaWithRecord(state.activeRecord);
+          if (added > 0) scheduleColumnDescriptionEnrich();
         }
       }
 
@@ -1449,14 +1435,16 @@
        * We cannot filter by parentId using fetchSelectedTable().tableId: in the custom-widget-builder
        * numeric table refs often refer to a different table than the one described by fetchSelectedTable().columns.
        * Instead we scan all column-definition rows whose colId or label matches the current columnsMeta.
+       * Do not call this on every row change: use tryLoadColumnsMeta, first record bootstrap, or new col ids only.
        */
       async function enrichColumnDescriptionsFromGristMeta() {
         if (!state.hasGrist || !window.grist || !grist.docApi) return;
         if (typeof grist.docApi.fetchTable !== "function") return;
         if (!state.columnsMeta.length) return;
         try {
-          const columns = await grist.docApi.fetchTable("_grist_Tables_column");
+          const columns = gristTablesColumnCache || await grist.docApi.fetchTable("_grist_Tables_column");
           if (!columns || !Array.isArray(columns.parentId)) return;
+          if (!gristTablesColumnCache) gristTablesColumnCache = columns;
           const wantColIds = new Set(state.columnsMeta.map((m) => String(m.id)));
           const wantLabels = new Set(
             state.columnsMeta
@@ -1506,6 +1494,7 @@
             const cols = (table && table.columns) ? table.columns : [];
             if (cols.length) {
               state.columnsMeta = normalizeMetaFromColumns(cols);
+              gristTablesColumnCache = null;
             }
             await enrichColumnDescriptionsFromGristMeta();
             return;
@@ -1642,16 +1631,7 @@
         wireGrist();
         await tryLoadColumnsMeta();
         recomputeAndRender();
-        await enrichColumnDescriptionsFromGristMeta();
-        recomputeAndRender();
         els.debugToggle.style.display = state.settingsVisible ? "flex" : "none";
-        if (state.isBuilderHost) {
-          await refreshRecordFromDocApi("init-builder");
-          if (state.recordPollTimer) clearInterval(state.recordPollTimer);
-          state.recordPollTimer = setInterval(() => {
-            refreshRecordFromDocApi("poll-builder");
-          }, 1200);
-        }
       }
       function waitForGristAndInit() {
         if (window.grist && typeof window.grist.ready === "function") {

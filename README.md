@@ -56,7 +56,7 @@ A single-file HTML **custom widget** for [Grist](https://www.getgrist.com/). It 
 
 ## Behavior in the Custom Widget Builder
 
-The active row may arrive via **events** and/or **polling** (`fetchSelectedRecord`). The widget **merges** snapshots for the same row so partial records with `undefined` cells do not overwrite already valid values (avoids chart flicker). See `docs/debug-learnings.md` for details.
+The active row is driven by **`grist.onRecord` / `grist.onRecords`** only (no polling). The widget **merges** snapshots for the same row so partial records with `undefined` cells do not overwrite already valid values (avoids chart flicker). See `docs/debug-learnings.md` for details.
 
 ---
 
