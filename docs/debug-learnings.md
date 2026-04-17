@@ -1,11 +1,57 @@
 # Debug Learnings - Grist Wide Pie Widget
 
-Due filoni distinti: **flicker del grafico** (record parziali vs merge) e **descrizioni colonna in legenda** (metadati `_grist_Tables_column` vs tabella attiva nel builder).
+Tre filoni distinti: **flicker del grafico** (record parziali vs merge), **descrizioni colonna in legenda** (metadati `_grist_Tables_column` vs tabella attiva nel builder), e **toggle UI non rispondenti** (bootstrap `init` vs CSS in iframe).
 
-## Problema originale
+## Riferimento rapido
+
+- **Live Server / pagina senza `window.grist` sul primo tick:** il vecchio bootstrap chiamava `init()` (e quindi `wireInputs()`) solo quando `grist.ready` era già disponibile. Senza Grist, dopo il timeout del poll **`init()` non veniva mai eseguito** → nessun listener su ⚙/🐞. **Fix risolutivo:** chiamare comunque **`init()` subito** quando manca Grist, così la shell UI è cablata; usare **`state.uiShellWired`** per non duplicare tooltip/drag/listener input se `init()` viene richiamato quando Grist compare dopo; usare **`state.gristWireDone`** dopo un `grist.ready` riuscito così **`grist.ready` e gli handler Grist non si registrano due volte**.
+- **Iframe Grist (produzione):** `position: fixed` fuori dal root del widget + `transform` / stacking sugli antenati può far sì che i controlli siano visibili ma **non ricevano** i click. **Fix strutturale (separato):** controlli con `position: absolute` **dentro** `.app`, `z-index` alto, selettori corretti (es. `.app.settings-hidden .debug-toggle` se il toggle è figlio di `.app`).
+
+---
+
+## Incident: toggle ⚙ / 🐞 non cliccabili (bug risolto)
+
+### Problema originale
+
+I pulsanti **impostazioni** (⚙) e **debug** (🐞) non reagivano ai click. Si riproduceva **nell’embed Grist** e, in modo decisivo per la diagnosi, anche con **Live Server** aprendo l’HTML senza host Grist. A volte la sidebar sembrava ancora “usabile”, il che portava a ipotizzare overlay o `pointer-events`, ma non era l’unica causa.
+
+### Bug reale e causa (due problemi distinti, spesso confusi)
+
+1. **Listener mai registrati (caso Live Server / assenza di `window.grist` al bootstrap):**  
+   `waitForGristAndInit()` chiamava `init()` **solo** quando `window.grist` e `grist.ready` erano già presenti. Senza Grist, il timer andava in timeout e **`init()` non veniva mai eseguito** → **`wireInputs()` non girava mai** → i toggle **non avevano handler `click`**. Non era un problema solo di CSS: **non c’era nulla da “cliccare” a livello di logica.**
+
+2. **Hit-test rotto nell’iframe (Grist in produzione):**  
+   Controlli con `position: fixed` fuori dalla radice di stacking del widget, insieme a `transform` sugli antenati, possono rendere gli elementi visibili ma **non target di hit-test**. Qui servono DOM/CSS corretti (controlli **dentro** `.app`, `position: absolute`, stacking alto). Questo **non** risolve (1) se `init()` non parte.
+
+### Cosa è stato provato prima del fix finale (non risolveva il caso “`init()` mai chiamato”)
+
+- Retry e tempistiche su `grist.docApi`, `requiredAccess: "full"`, `grist.ready`.
+- Aumento `z-index`, prove su `pointer-events`, spostamento dei controlli nel DOM.
+- Spostamento di ⚙/🐞 e del pannello debug **dentro** `.app` e passaggio da **`position: fixed`** a **`position: absolute`** (utile per (2) in iframe; **non** sostituisce (1) se `init()` non viene invocato).
+- Log nella finestra debug del widget e probe nella **console sviluppatore** (`elementFromPoint`, `pointerdown` in capture) per ipotesi overlay — utili per distinguere (1) vs (2), ma **non** sostituiscono il cablaggio di `init()`.
+
+### Fix finale (quello che ha risolto il problema percepito dall’utente)
+
+- **Chiamare `init()` anche quando Grist non c’è al primo tick:** così `wireInputs()`, `wireTooltip()` e `wireDebugWindowDrag()` vengono eseguiti (Live Server e anteprima locale funzionano).
+- **Evitare doppie registrazioni:**  
+  - **`state.uiShellWired`:** cabla una sola volta input + tooltip + drag della finestra debug; se `init()` viene richiamato quando Grist compare dopo, non si duplicano listener sulla canvas o sul drag.  
+  - **`state.gristWireDone`:** dopo un `grist.ready` riuscito, non si ripete la registrazione di `grist.ready` e degli handler.
+- **Mantenere** la correzione CSS/DOM per l’embed: controlli dentro `.app`, `position: absolute`, stacking alto (per (2)).
+
+### Nota per agenti futuri
+
+- **Sintomi simili a “layer invisibile sopra i pulsanti”** possono nascondere il fatto che **non esistono listener**. Prima di investire ore in hit-test e `pointer-events`, verificare che **`init()` / `wireInputs()` siano eseguiti** nell’ambiente che fallisce (es. HTML servito senza `window.grist`).
+- **Non bloccare tutto il cablaggio UI sull’API Grist** se pannello e controlli devono essere usabili anche senza host: cablare prima la shell; agganciare Grist quando disponibile.
+- **Separare le ipotesi:** “CSS iframe” vs “bootstrap che non chiama `init`” richiedono fix diversi; se la riproduzione include **sia embed sia Live Server**, considerare **entrambe** le cause.
+
+---
+
+## 1. Flicker del grafico (record parziali)
+
+### Problema originale
 Nel builder di Grist il grafico funzionava solo per un istante dopo il cambio riga: appariva correttamente e subito dopo tornava vuoto.
 
-## Bug reale e causa
+### Bug reale e causa
 Il bug era una race tra due sorgenti dati:
 - `onRecord` consegnava un record completo (grafico corretto).
 - il polling `fetchSelectedRecord()` a volte consegnava subito dopo un record "parziale" con molte colonne `undefined`.
@@ -13,7 +59,7 @@ Il bug era una race tra due sorgenti dati:
 
 Effetto visibile: flicker "appare e scompare".
 
-## Modifiche fatte prima del fix finale (non risolutive da sole)
+### Modifiche fatte prima del fix finale (non risolutive da sole)
 - Hardening `setOptions/onOptions` (debounce, anti-loop, guardie in builder).
 - Retry/init più difensivo per `grist.ready`.
 - Logging esteso in UI e console per tracciare pipeline selezione/parse/render.
@@ -23,7 +69,7 @@ Effetto visibile: flicker "appare e scompare".
 
 Questi cambiamenti aiutavano a diagnosticare o mitigare, ma non eliminavano la sovrascrittura con record incompleto.
 
-## Fix finale
+### Fix finale
 - Introduzione merge record per stessa riga (`mergeGristRecords`):
   - se `id` riga è uguale, i campi `undefined` del nuovo snapshot non sovrascrivono i valori già validi.
   - i campi definiti continuano ad aggiornarsi normalmente.
@@ -31,13 +77,13 @@ Questi cambiamenti aiutavano a diagnosticare o mitigare, ma non eliminavano la s
 - In passato era presente anche polling `fetchSelectedRecord` nel builder; è stato rimosso in favore del solo modello a eventi (meno RPC/console).
 - Rimosso comportamento non desiderato di auto-selezione iniziale "tutte le colonne" e relativo fallback render.
 
-## Nota di apprendimento per agenti futuri
+### Nota di apprendimento per agenti futuri
 Nel `custom-widget-builder` non basta "avere un fallback": bisogna anche evitare che il fallback degradi lo stato già valido.
 Regola pratica: quando arrivano snapshot multipli della stessa entità, fare merge conservativo e non permettere a valori `undefined` di cancellare dati validi.
 
 ---
 
-## Descrizioni colonna sulla legenda (attributo `title` / hover)
+## 2. Descrizioni colonna sulla legenda (attributo `title` / hover)
 
 ### Problema originale
 Le descrizioni delle colonne definite in Grist non comparivano al passaggio del mouse sulla **legenda** (tooltip nativo del browser). Il problema era evidente soprattutto nel **custom widget builder**, dove i log di debug mostravano `metaWithDescription: 0` e colonne del grafico senza testo associato.
@@ -64,7 +110,3 @@ Le descrizioni delle colonne definite in Grist non comparivano al passaggio del 
 
 ### Perché altri widget grafici “non aggiornano sempre” e vanno lo stesso
 Molti widget si limitano a **`grist.onRecord`** (o equivalente) e ridisegnano quando **cambia la riga o i dati**. Il Wide Pie ora segue lo stesso modello (**solo eventi**, niente `setInterval` + `fetchSelectedRecord`). Non accoppiare fetch ripetuti su **tabelle interne** grosse al refresh riga: la console e il server si riempiono di RPC e compaiono warning tipo `RPC_UNKNOWN_REQID` (race tra risposte e nuove richieste).
-
-### UI: pulsanti non cliccabili in produzione (iframe)
-- **`position: fixed`** su elementi **fuori** dal root del widget può interagire male con **contenitori con `transform`** / stacking nel frame Grist: i pulsanti sembrano visibili ma **non ricevono click** (mentre gli `<input>` nel pannello sì).
-- **Fix:** `position: relative` sul container `.app`, pulsanti e finestra debug **`position: absolute`** **dentro** `.app`, `z-index` alto. Non usare il selettore `~` tra `.app` e `.debug-toggle` se il toggle è figlio di `.app` → usare `.app.settings-hidden .debug-toggle`.

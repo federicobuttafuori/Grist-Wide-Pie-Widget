@@ -454,7 +454,6 @@
         inputsWired: false,
         /** Shell UI (tooltip, debug drag) wired once; init may run twice when Grist loads after first paint. */
         uiShellWired: false,
-        devPointerProbeInstalled: false,
         gristWireDone: false
       };
       state.isBuilderHost = window.location.pathname.includes("/grist-widget/custom-widget-builder/");
@@ -486,12 +485,6 @@
       };
 
       const ctx = els.canvas.getContext("2d");
-      /** DevTools only — not the in-widget debug panel. Prefix: [WidePie] */
-      function devLog() {
-        const args = Array.prototype.slice.call(arguments);
-        args.unshift("[WidePie]");
-        console.info.apply(console, args);
-      }
       const DEBUG_ENABLED = true;
       const debugLines = [];
       const MAX_DEBUG_LINES = 120;
@@ -1577,7 +1570,6 @@
           els.debugToggle.style.display = state.settingsVisible ? "flex" : "none";
         });
         els.debugToggle.addEventListener("click", () => {
-          devLog("click: debugToggle");
           const next = !els.debugWindow.classList.contains("visible");
           els.debugWindow.classList.toggle("visible", next);
           els.debugToggle.title = next ? "Hide debug logs" : "Show debug logs";
@@ -1612,10 +1604,8 @@
           return;
         }
         if (state.gristWireDone) {
-          devLog("wireGrist: already done, skip");
           return;
         }
-        devLog("wireGrist: calling grist.ready + handlers");
         try {
           /* "full" needed for docApi.fetchTable on _grist_* metadata; matches typical production custom widgets. */
           grist.ready({ requiredAccess: "full" });
@@ -1656,70 +1646,6 @@
         }
       }
 
-      function logHitTestForPointer(clientX, clientY) {
-        try {
-          const stack = [];
-          let el = document.elementFromPoint(clientX, clientY);
-          let depth = 0;
-          while (el && depth < 12) {
-            const cs = window.getComputedStyle(el);
-            stack.push({
-              tag: el.tagName,
-              id: el.id || null,
-              className: el.className && typeof el.className === "string" ? el.className.slice(0, 80) : null,
-              pe: cs.pointerEvents,
-              z: cs.zIndex,
-              pos: cs.position
-            });
-            el = el.parentElement;
-            depth += 1;
-          }
-          devLog("hit-test @", clientX, clientY, stack);
-        } catch (e) {
-          devLog("hit-test failed", e && e.message ? e.message : String(e));
-        }
-      }
-
-      function logToggleLayout(reason) {
-        const st = els.settingsToggle && els.settingsToggle.getBoundingClientRect();
-        const db = els.debugToggle && els.debugToggle.getBoundingClientRect();
-        const app = els.app && els.app.getBoundingClientRect();
-        devLog("layout (" + reason + ")", {
-          app: app ? { w: Math.round(app.width), h: Math.round(app.height) } : null,
-          settingsToggle: st
-            ? { left: Math.round(st.left), bottom: Math.round(st.bottom), w: Math.round(st.width), h: Math.round(st.height) }
-            : null,
-          debugToggle: db
-            ? { left: Math.round(db.left), bottom: Math.round(db.bottom), w: Math.round(db.width), h: Math.round(db.height) }
-            : null
-        });
-        if (els.settingsToggle) {
-          const cs = window.getComputedStyle(els.settingsToggle);
-          devLog("settingsToggle computed", { pointerEvents: cs.pointerEvents, display: cs.display, visibility: cs.visibility, zIndex: cs.zIndex });
-        }
-      }
-
-      /** One-shot: log raw pointer events in capture phase (DevTools) to see if something steals clicks. */
-      function installDevPointerProbeOnce() {
-        if (state.devPointerProbeInstalled) return;
-        state.devPointerProbeInstalled = true;
-        document.addEventListener(
-          "pointerdown",
-          function (ev) {
-            const t = ev.target;
-            const id = t && t.id ? t.id : "";
-            if (id === "settingsToggle" || id === "debugToggle" || (t && t.closest && (t.closest("#settingsToggle") || t.closest("#debugToggle")))) {
-              devLog("pointerdown on toggle", id || t && t.tagName, "button=", ev.button);
-            }
-            if (ev.clientY > window.innerHeight - 120 && ev.clientX < 140) {
-              logHitTestForPointer(ev.clientX, ev.clientY);
-            }
-          },
-          true
-        );
-        devLog("dev pointer probe installed (capture on document; hit-test near bottom-left controls)");
-      }
-
       async function init() {
         if (state.isBuilderHost) {
           state.optionsApiAvailable = false;
@@ -1727,36 +1653,28 @@
           if (localOptions) applyLoadedOptions(localOptions);
         }
         if (!state.uiShellWired) {
-          devLog("init: wiring UI shell (inputs, tooltip, debug drag) — hasGrist=", state.hasGrist);
           wireInputs();
           wireTooltip();
           wireDebugWindowDrag();
           state.uiShellWired = true;
-          installDevPointerProbeOnce();
-          logToggleLayout("after wire");
-          devLog("init: toggles should have click listeners; inputsWired=", state.inputsWired);
-        } else {
-          devLog("init: UI shell already wired — only Grist / data path");
         }
         wireGrist();
         await tryLoadColumnsMeta();
         recomputeAndRender();
         els.debugToggle.style.display = state.settingsVisible ? "flex" : "none";
       }
+      /**
+       * If `grist` is missing (e.g. Live Server), still run `init()` so the UI shell is wired.
+       * Poll for late injection; second `init()` relies on `uiShellWired` / `gristWireDone`.
+       */
       function waitForGristAndInit() {
         const gristReady = window.grist && typeof window.grist.ready === "function";
-        devLog("bootstrap start", {
-          href: window.location.href,
-          gristReady: !!gristReady,
-          isBuilderHost: state.isBuilderHost
-        });
         if (gristReady) {
           state.hasGrist = true;
           init();
           return;
         }
         state.hasGrist = false;
-        devLog("bootstrap: no grist on first tick — calling init() so buttons work on Live Server / file preview");
         init();
         renderStatus("Waiting for Grist host...");
         let attempts = 0;
@@ -1766,15 +1684,12 @@
           if (window.grist && typeof window.grist.ready === "function") {
             clearInterval(timer);
             state.hasGrist = true;
-            devLog("bootstrap: grist appeared after wait — second init wires grist.ready");
             init();
             return;
           }
           if (attempts >= maxAttempts) {
             clearInterval(timer);
             renderStatus("Grist API unavailable. Open this file inside Grist custom widget.");
-            devLog("bootstrap: grist still missing after " + maxAttempts + " attempts; UI shell was wired on first init");
-            logToggleLayout("after grist wait timeout");
           }
         }, 250);
       }
