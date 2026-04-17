@@ -64,3 +64,7 @@ Le descrizioni delle colonne definite in Grist non comparivano al passaggio del 
 
 ### Perché altri widget grafici “non aggiornano sempre” e vanno lo stesso
 Molti widget si limitano a **`grist.onRecord`** (o equivalente) e ridisegnano quando **cambia la riga o i dati**. Il Wide Pie ora segue lo stesso modello (**solo eventi**, niente `setInterval` + `fetchSelectedRecord`). Non accoppiare fetch ripetuti su **tabelle interne** grosse al refresh riga: la console e il server si riempiono di RPC e compaiono warning tipo `RPC_UNKNOWN_REQID` (race tra risposte e nuove richieste).
+
+### UI: pulsanti non cliccabili in produzione (iframe)
+- **`position: fixed`** su elementi **fuori** dal root del widget può interagire male con **contenitori con `transform`** / stacking nel frame Grist: i pulsanti sembrano visibili ma **non ricevono click** (mentre gli `<input>` nel pannello sì).
+- **Fix:** `position: relative` sul container `.app`, pulsanti e finestra debug **`position: absolute`** **dentro** `.app`, `z-index` alto. Non usare il selettore `~` tra `.app` e `.debug-toggle` se il toggle è figlio di `.app` → usare `.app.settings-hidden .debug-toggle`.
