@@ -31,8 +31,9 @@ A single-file HTML **custom widget** for [Grist](https://www.getgrist.com/). It 
 
 1. Open your Grist document and add a **Custom widget**.
 2. Paste the full contents of `index.html` into the widget code editor (or upload the file if your deployment supports it).
-3. Point the widget at the target table.
-4. Select a **row** in that table. If no row is selected, there is no active record to visualize.
+3. The HTML **includes** `https://docs.getgrist.com/grist-plugin-api.js` so `window.grist` exists when the widget is served as an external URL. Do not remove that tag. (Self‑hosted Grist: if your CSP blocks that origin, point the `src` at your instance’s `grist-plugin-api.js` instead.)
+4. Point the widget at the target table.
+5. Select a **row** in that table. If no row is selected, there is no active record to visualize.
 
 ---
 

@@ -433,10 +433,12 @@
   </section>
   <div id="tooltip" class="tooltip"></div>
 
+  <!-- Required for window.grist when the widget is loaded as a hosted URL; Grist docs: custom widgets must include this. -->
+  <script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
   <script>
     (function () {
       /** Bump this string when the user explicitly asks for a version update (release label). */
-      const WIDGET_VERSION = "2026.04.16";
+      const WIDGET_VERSION = "2026.04.17";
 
       const DEFAULT_COLORS = [
         "#2563eb", "#dc2626", "#16a34a", "#ca8a04", "#7c3aed",
