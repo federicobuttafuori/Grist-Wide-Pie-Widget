@@ -133,10 +133,24 @@
     }
     .config-row {
       display: grid;
-      grid-template-columns: 1fr 1fr 70px;
+      grid-template-columns: 12px 1fr 1fr 70px;
       gap: 6px;
       align-items: center;
       margin-bottom: 6px;
+    }
+    .config-drag-handle {
+      cursor: grab;
+      color: #9ca3af;
+      font-size: 11px;
+      line-height: 1;
+      user-select: none;
+      text-align: center;
+    }
+    .config-drag-handle:active {
+      cursor: grabbing;
+    }
+    .config-row.config-row--dragging {
+      opacity: 0.7;
     }
     .config-row .name {
       font-size: 12px;
@@ -291,6 +305,7 @@
       right: 12px;
       bottom: auto;
       width: min(720px, calc(100vw - 24px));
+      max-width: calc(100vw - 24px);
       max-height: 38vh;
       z-index: 1200;
       display: none;
@@ -299,6 +314,9 @@
       background: #0b1220;
       color: #e2e8f0;
       box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+      overflow: hidden;
+      box-sizing: border-box;
+      min-width: 0;
     }
     .debug-window.visible {
       display: block;
@@ -340,18 +358,32 @@
       line-height: 1.5;
       color: #cbd5e1;
       white-space: pre-wrap;
+      word-wrap: break-word;
+      overflow-wrap: anywhere;
       word-break: break-word;
+      max-width: 100%;
+      min-width: 0;
+      max-height: min(200px, 28vh);
+      overflow: auto;
+      box-sizing: border-box;
     }
     .debug-body {
       margin: 0;
       padding: 10px;
+      max-width: 100%;
+      min-width: 0;
       overflow: auto;
+      overflow-x: auto;
+      overflow-y: auto;
       max-height: min(200px, calc(38vh - 100px));
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 11px;
       line-height: 1.45;
       white-space: pre-wrap;
+      word-wrap: break-word;
+      overflow-wrap: anywhere;
       word-break: break-word;
+      box-sizing: border-box;
     }
     @media (max-width: 920px) {
       .app { grid-template-columns: 1fr; }
@@ -436,7 +468,7 @@
   <script>
     (function () {
       /** Bump this string when the user explicitly asks for a version update (release label). */
-      const WIDGET_VERSION = "2026.04.18";
+      const WIDGET_VERSION = "2026.04.19";
 
       const DEFAULT_COLORS = [
         "#2563eb", "#dc2626", "#16a34a", "#ca8a04", "#7c3aed",
@@ -457,7 +489,9 @@
           numberPrefix: "",
           numberDecimals: 2,
           customLabels: {},
-          customColors: {}
+          customColors: {},
+          /** Order of column keys for pie, legend, and the selected-columns list UI. */
+          columnDisplayOrder: []
         },
         validationErrors: { includeRegex: "", excludeRegex: "" },
         selectedColumnsResolved: [],
@@ -578,8 +612,69 @@
           numberPrefix: typeof state.config.numberPrefix === "string" ? state.config.numberPrefix : "",
           numberDecimals: sanitizeDecimals(state.config.numberDecimals),
           customLabels: isPlainObject(state.config.customLabels) ? state.config.customLabels : {},
-          customColors: isPlainObject(state.config.customColors) ? state.config.customColors : {}
+          customColors: isPlainObject(state.config.customColors) ? state.config.customColors : {},
+          columnDisplayOrder: sanitizeColumnDisplayOrder(state.config.columnDisplayOrder)
         };
+      }
+
+      function sanitizeColumnDisplayOrder(input) {
+        if (!Array.isArray(input)) return [];
+        const out = [];
+        const seen = new Set();
+        for (let i = 0; i < input.length; i++) {
+          const s = typeof input[i] === "string" ? input[i].trim() : "";
+          if (s && !seen.has(s)) {
+            seen.add(s);
+            out.push(s);
+          }
+        }
+        return out;
+      }
+
+      /** Keep saved order for existing keys; append newly selected keys at the end (sorted by key for stability). */
+      function mergeColumnDisplayOrder(allKeys) {
+        const set = new Set(allKeys);
+        const prev = sanitizeColumnDisplayOrder(state.config.columnDisplayOrder);
+        const next = [];
+        for (let i = 0; i < prev.length; i++) {
+          if (set.has(prev[i])) next.push(prev[i]);
+        }
+        const missing = [];
+        for (let i = 0; i < allKeys.length; i++) {
+          if (next.indexOf(allKeys[i]) === -1) missing.push(allKeys[i]);
+        }
+        missing.sort(function (a, b) {
+          return String(a).localeCompare(String(b));
+        });
+        for (let i = 0; i < missing.length; i++) next.push(missing[i]);
+        state.config.columnDisplayOrder = next;
+      }
+
+      function sortResolvedByDisplayOrder(resolved) {
+        const order = sanitizeColumnDisplayOrder(state.config.columnDisplayOrder);
+        const orderMap = new Map(order.map(function (k, i) {
+          return [k, i];
+        }));
+        resolved.sort(function (a, b) {
+          const ia = orderMap.has(a.key) ? orderMap.get(a.key) : 1e9;
+          const ib = orderMap.has(b.key) ? orderMap.get(b.key) : 1e9;
+          if (ia !== ib) return ia - ib;
+          return String(a.label).localeCompare(String(b.label));
+        });
+      }
+
+      function reorderColumnDisplayOrder(fromKey, toKey) {
+        const order = sanitizeColumnDisplayOrder(state.config.columnDisplayOrder).slice();
+        const from = order.indexOf(fromKey);
+        let to = order.indexOf(toKey);
+        if (from < 0 || to < 0 || from === to) return;
+        order.splice(from, 1);
+        to = order.indexOf(toKey);
+        order.splice(to, 0, fromKey);
+        state.config.columnDisplayOrder = order;
+        persistOptions();
+        state.lastRenderedSelectedKeysSig = null;
+        recomputeAndRender();
       }
 
       function loadLocalOptions() {
@@ -858,6 +953,14 @@
         const resolved = Array.from(resultSet)
           .map((key) => byKey.get(key))
           .filter(Boolean);
+        const prevOrderJson = JSON.stringify(sanitizeColumnDisplayOrder(state.config.columnDisplayOrder));
+        mergeColumnDisplayOrder(resolved.map(function (c) {
+          return c.key;
+        }));
+        sortResolvedByDisplayOrder(resolved);
+        if (JSON.stringify(state.config.columnDisplayOrder) !== prevOrderJson) {
+          persistOptions();
+        }
         return {
           resolved,
           blockedByRegexError: false
@@ -1021,7 +1124,7 @@
       }
 
       function selectedColumnsKeysSignature(resolved) {
-        return (resolved || []).map((c) => c.key).sort().join("|");
+        return (resolved || []).map((c) => c.key).join("|");
       }
 
       /** Avoid rebuilding label/color inputs on every record update; only when selection changes. */
@@ -1043,6 +1146,35 @@
         for (const col of selected) {
           const row = document.createElement("div");
           row.className = "config-row";
+          row.dataset.colKey = col.key;
+
+          const handle = document.createElement("span");
+          handle.className = "config-drag-handle";
+          handle.textContent = "\u22EE";
+          handle.title = "Trascina per riordinare";
+          handle.setAttribute("aria-label", "Trascina per riordinare");
+          handle.setAttribute("draggable", "true");
+          handle.addEventListener("dragstart", function (e) {
+            e.dataTransfer.setData("text/plain", col.key);
+            e.dataTransfer.effectAllowed = "move";
+            row.classList.add("config-row--dragging");
+          });
+          handle.addEventListener("dragend", function () {
+            row.classList.remove("config-row--dragging");
+          });
+
+          row.addEventListener("dragover", function (e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+          });
+          row.addEventListener("drop", function (e) {
+            e.preventDefault();
+            const fromKey = e.dataTransfer.getData("text/plain");
+            const toKey = row.dataset.colKey;
+            if (fromKey && toKey && fromKey !== toKey) {
+              reorderColumnDisplayOrder(fromKey, toKey);
+            }
+          });
 
           const name = document.createElement("div");
           name.className = "name";
@@ -1069,6 +1201,7 @@
             recomputeAndRender();
           });
 
+          row.appendChild(handle);
           row.appendChild(name);
           row.appendChild(labelInput);
           row.appendChild(colorInput);
@@ -1323,7 +1456,8 @@
           numberPrefix: typeof incoming.numberPrefix === "string" ? incoming.numberPrefix : "",
           numberDecimals: sanitizeDecimals(incoming.numberDecimals),
           customLabels,
-          customColors
+          customColors,
+          columnDisplayOrder: sanitizeColumnDisplayOrder(incoming.columnDisplayOrder)
         };
         const nextJson = JSON.stringify(nextConfig);
         if (nextJson === state.lastAppliedOptionsJson) return;
