@@ -22,21 +22,47 @@
       background: var(--bg);
     }
     .app {
+      --panel-w: 360px;
+      --panel-min: 260px;
       display: grid;
-      grid-template-columns: 360px 1fr;
+      grid-template-columns: minmax(var(--panel-min), min(var(--panel-w), min(90vw, calc(100vw - 48px)))) 1fr;
       min-height: 100vh;
     }
     .app.settings-hidden {
       grid-template-columns: 1fr;
     }
     .panel {
+      position: relative;
       border-right: 1px solid var(--border);
       padding: 0;
       background: var(--panel);
       display: flex;
       flex-direction: column;
       min-height: 0;
+      min-width: 0;
       align-self: stretch;
+    }
+    .panel-resizer {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 10px;
+      margin-right: -5px;
+      z-index: 6;
+      cursor: ew-resize;
+      touch-action: none;
+      background: transparent;
+    }
+    .panel-resizer:hover {
+      background: rgba(59, 130, 246, 0.12);
+    }
+    .panel-resizer:focus-visible {
+      outline: 2px solid #2563eb;
+      outline-offset: -2px;
+    }
+    .app.settings-hidden .panel-resizer {
+      display: none;
     }
     .panel-body {
       flex: 1 1 auto;
@@ -159,6 +185,39 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+    .config-col-name {
+      border-radius: 4px;
+    }
+    @media (hover: hover) and (pointer: fine) {
+      .config-col-name {
+        cursor: help;
+      }
+    }
+    .config-col-name:focus {
+      outline: 2px solid #93c5fd;
+      outline-offset: 1px;
+    }
+    @media (hover: none) {
+      .config-col-name {
+        cursor: pointer;
+      }
+    }
+    .column-name-tip {
+      position: fixed;
+      left: 0;
+      top: 0;
+      z-index: 10060;
+      max-width: min(360px, calc(100vw - 16px));
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: #1f2937;
+      color: #f9fafb;
+      font-size: 12px;
+      line-height: 1.4;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.18);
+      word-break: break-word;
+      pointer-events: none;
     }
     .config-row input[type="text"],
     .config-row input[type="color"] {
@@ -392,6 +451,7 @@
     }
     @media (max-width: 920px) {
       .app { grid-template-columns: 1fr; }
+      .panel-resizer { display: none; }
       .panel { border-right: none; border-bottom: 1px solid var(--border); }
       .chart-wrap { grid-template-columns: 1fr; }
       #pieCanvas { max-width: 100%; }
@@ -401,6 +461,14 @@
 <body>
   <div class="app">
     <aside class="panel">
+      <div
+        class="panel-resizer"
+        id="panelResizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Ridimensiona pannello impostazioni"
+        tabindex="-1"
+      ></div>
       <div class="panel-body">
       <h1>Wide Row Pie</h1>
       <div class="field">
@@ -473,7 +541,7 @@
   <script>
     (function () {
       /** Bump this string when the user explicitly asks for a version update (release label). */
-      const WIDGET_VERSION = "2026.04.20";
+      const WIDGET_VERSION = "2026.04.21";
 
       const DEFAULT_COLORS = [
         "#2563eb", "#dc2626", "#16a34a", "#ca8a04", "#7c3aed",
@@ -481,6 +549,7 @@
         "#b91c1c", "#15803d"
       ];
       const LOCAL_OPTIONS_KEY = "grist-wide-pie-widget:options:v1";
+      const PANEL_WIDTH_STORAGE_KEY = "grist-wide-pie-widget:panelWidthPx:v1";
       /** One fetch per widget lifetime; `_grist_Tables_column` is large and descriptions are schema data. */
       let gristTablesColumnCache = null;
 
@@ -516,7 +585,9 @@
         inputsWired: false,
         /** Shell UI (tooltip, debug drag) wired once; init may run twice when Grist loads after first paint. */
         uiShellWired: false,
-        gristWireDone: false
+        gristWireDone: false,
+        panelResizeWired: false,
+        _panelResizeActive: false
       };
       state.isBuilderHost = window.location.pathname.includes("/grist-widget/custom-widget-builder/");
 
@@ -543,7 +614,8 @@
         debugOutput: document.getElementById("debugOutput"),
         copyDebugLog: document.getElementById("copyDebugLog"),
         clearDebugLog: document.getElementById("clearDebugLog"),
-        closeDebugLog: document.getElementById("closeDebugLog")
+        closeDebugLog: document.getElementById("closeDebugLog"),
+        panelResizer: document.getElementById("panelResizer")
       };
 
       (function applyWidgetVersion() {
@@ -1132,6 +1204,68 @@
         return (resolved || []).map((c) => c.key).join("|");
       }
 
+      function fullColumnNameForTip(col) {
+        const lab = col.label != null ? String(col.label).trim() : "";
+        const id = col.id != null ? String(col.id).trim() : "";
+        if (lab && id && lab !== id) return lab + " · " + id;
+        return lab || id || String(col.key || "");
+      }
+
+      let columnNameTipEl = null;
+      let columnNameTipHideTimer = null;
+
+      function dismissColumnNameTip() {
+        if (columnNameTipHideTimer) {
+          clearTimeout(columnNameTipHideTimer);
+          columnNameTipHideTimer = null;
+        }
+        document.removeEventListener("click", onDocClickDismissColumnTip, true);
+        document.removeEventListener("keydown", onColumnTipEscape, true);
+        if (columnNameTipEl) {
+          columnNameTipEl.remove();
+          columnNameTipEl = null;
+        }
+      }
+
+      function onColumnTipEscape(e) {
+        if (e.key === "Escape") dismissColumnNameTip();
+      }
+
+      function onDocClickDismissColumnTip(e) {
+        if (columnNameTipEl && !columnNameTipEl.contains(e.target)) {
+          dismissColumnNameTip();
+        }
+      }
+
+      function showColumnNameTip(text, anchorEl) {
+        dismissColumnNameTip();
+        const el = document.createElement("div");
+        el.className = "column-name-tip";
+        el.textContent = text;
+        columnNameTipEl = el;
+        document.body.appendChild(el);
+        const pad = 8;
+        const rect = anchorEl.getBoundingClientRect();
+        const br = el.getBoundingClientRect();
+        let left = rect.left;
+        let top = rect.bottom + 6;
+        if (left + br.width > window.innerWidth - pad) {
+          left = Math.max(pad, window.innerWidth - pad - br.width);
+        } else if (left < pad) {
+          left = pad;
+        }
+        if (top + br.height > window.innerHeight - pad) {
+          top = Math.max(pad, rect.top - 6 - br.height);
+        }
+        el.style.left = left + "px";
+        el.style.top = top + "px";
+        columnNameTipHideTimer = setTimeout(dismissColumnNameTip, 6000);
+        setTimeout(function () {
+          document.addEventListener("click", onDocClickDismissColumnTip, true);
+          document.addEventListener("keydown", onColumnTipEscape, true);
+        }, 0);
+      }
+
       /** Avoid rebuilding label/color inputs on every record update; only when selection changes. */
       function maybeRenderSelectedConfig(resolved) {
         const sig = selectedColumnsKeysSignature(resolved);
@@ -1182,8 +1316,23 @@
           });
 
           const name = document.createElement("div");
-          name.className = "name";
+          const fullColName = fullColumnNameForTip(col);
+          name.className = "name config-col-name";
           name.textContent = col.label;
+          name.title = fullColName;
+          name.setAttribute("aria-label", "Colonna: " + fullColName + ". Clic o Invio per mostrare il nome completo.");
+          name.tabIndex = 0;
+          name.addEventListener("click", function (e) {
+            e.stopPropagation();
+            showColumnNameTip(fullColName, name);
+          });
+          name.addEventListener("keydown", function (e) {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              e.stopPropagation();
+              showColumnNameTip(fullColName, name);
+            }
+          });
 
           const labelInput = document.createElement("input");
           labelInput.type = "text";
@@ -1704,6 +1853,77 @@
         }, 500);
       }
 
+      function applyPanelWidthFromStorage() {
+        if (!els.app) return;
+        try {
+          const raw = window.localStorage.getItem(PANEL_WIDTH_STORAGE_KEY);
+          if (!raw) return;
+          const n = Number.parseInt(raw, 10);
+          if (!Number.isFinite(n)) return;
+          const max = Math.max(260, Math.floor(window.innerWidth * 0.92));
+          const w = Math.max(260, Math.min(n, max));
+          els.app.style.setProperty("--panel-w", w + "px");
+        } catch (err) {
+          /* ignore */
+        }
+      }
+
+      function savePanelWidthPx(w) {
+        try {
+          window.localStorage.setItem(PANEL_WIDTH_STORAGE_KEY, String(Math.round(w)));
+        } catch (err) {
+          /* ignore */
+        }
+      }
+
+      function wirePanelResize() {
+        if (state.panelResizeWired || !els.panelResizer || !els.app) return;
+        state.panelResizeWired = true;
+        let startX = 0;
+        let startWidth = 0;
+
+        function maxPanelPx() {
+          return Math.max(260, Math.floor(window.innerWidth * 0.92));
+        }
+
+        function onPointerMove(e) {
+          if (!state._panelResizeActive) return;
+          const dx = e.clientX - startX;
+          let next = startWidth + dx;
+          next = Math.max(260, Math.min(next, maxPanelPx()));
+          els.app.style.setProperty("--panel-w", next + "px");
+        }
+
+        function endResize() {
+          if (!state._panelResizeActive) return;
+          state._panelResizeActive = false;
+          document.removeEventListener("pointermove", onPointerMove);
+          document.removeEventListener("pointerup", endResize);
+          document.removeEventListener("pointercancel", endResize);
+          const panel = els.app.querySelector(".panel");
+          if (panel) savePanelWidthPx(panel.getBoundingClientRect().width);
+        }
+
+        els.panelResizer.addEventListener("pointerdown", function (e) {
+          if (e.button !== 0) return;
+          if (window.matchMedia("(max-width: 920px)").matches) return;
+          if (els.app.classList.contains("settings-hidden")) return;
+          e.preventDefault();
+          state._panelResizeActive = true;
+          startX = e.clientX;
+          const panel = els.app.querySelector(".panel");
+          startWidth = panel ? panel.getBoundingClientRect().width : 360;
+          try {
+            els.panelResizer.setPointerCapture(e.pointerId);
+          } catch (err) {
+            /* ignore */
+          }
+          document.addEventListener("pointermove", onPointerMove);
+          document.addEventListener("pointerup", endResize);
+          document.addEventListener("pointercancel", endResize);
+        });
+      }
+
       function wireInputs() {
         if (state.inputsWired) return;
         state.inputsWired = true;
@@ -1838,6 +2058,7 @@
       }
 
       async function init() {
+        applyPanelWidthFromStorage();
         if (state.isBuilderHost) {
           state.optionsApiAvailable = false;
           const localOptions = loadLocalOptions();
@@ -1845,6 +2066,7 @@
         }
         if (!state.uiShellWired) {
           wireInputs();
+          wirePanelResize();
           wireTooltip();
           wireDebugWindowDrag();
           state.uiShellWired = true;
