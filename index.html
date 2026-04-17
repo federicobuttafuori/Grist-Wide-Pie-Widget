@@ -1601,8 +1601,12 @@
           return;
         }
         try {
-          /* "full" needed for docApi.fetchTable on _grist_* metadata; matches typical production custom widgets. */
-          grist.ready({ requiredAccess: "full" });
+          /*
+           * Keep the access request minimal in production/public embeds.
+           * Requesting "full" can cause Grist to block widget interaction until trust is granted.
+           * We only need read access for charting; metadata enrichment is best-effort when docApi is available.
+           */
+          grist.ready({ requiredAccess: "read table" });
         } catch (err) {
           console.warn("grist.ready failed, continuing in safe mode", err);
           renderStatus("Grist host handshake delayed. Retrying automatically...");
