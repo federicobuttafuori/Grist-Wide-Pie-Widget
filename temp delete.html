@@ -216,7 +216,6 @@
       pointer-events: none;
       text-shadow: 0 0 6px #fff, 0 0 8px #fff;
     }
-    /* fixed to viewport: stays visible when .app content is taller than the screen (absolute bottom scrolls away) */
     .settings-toggle {
       position: fixed;
       left: 12px;
@@ -443,12 +442,7 @@
         lastSavedOptionsJson: "",
         lastAppliedOptionsJson: "",
         optionsApiAvailable: true,
-        lastRenderedSelectedKeysSig: null,
-        /** Prevents duplicate addEventListener if init runs more than once. */
-        inputsWired: false,
-        /** Shell UI (tooltip, debug drag) wired once; init may run twice when Grist loads after first paint. */
-        uiShellWired: false,
-        gristWireDone: false
+        lastRenderedSelectedKeysSig: null
       };
       state.isBuilderHost = window.location.pathname.includes("/grist-widget/custom-widget-builder/");
 
@@ -519,17 +513,11 @@
         } else {
           chartLine = "Chart — (no columns selected)";
         }
-        const lines = [
+        els.debugSummary.textContent = [
           (state.isBuilderHost ? "Builder" : "Page") + " · options " + persist,
           "Row " + (rid != null && rid !== undefined ? String(rid) : "—") + " · " + resolved + " in pie · " + meta + " cols in meta",
           chartLine
-        ];
-        if (!state.isBuilderHost && !state.activeRecord && meta === 0) {
-          lines.push(
-            "Tip: add this widget with “Select Data” = your table, grant access, then click a row. Until a row is sent, the chart waits."
-          );
-        }
-        els.debugSummary.textContent = lines.join("\n");
+        ].join("\n");
       }
 
       function makeColumnKey(meta) {
@@ -1500,34 +1488,23 @@
 
       async function tryLoadColumnsMeta() {
         if (!state.hasGrist || !window.grist) return;
-        const deadline = Date.now() + 8000;
-        while (Date.now() < deadline) {
-          if (grist.docApi && typeof grist.docApi.fetchSelectedTable === "function") break;
-          await new Promise((r) => setTimeout(r, 40));
-        }
         try {
-          if (!grist.docApi || typeof grist.docApi.fetchSelectedTable !== "function") {
-            console.warn("Wide Pie: grist.docApi.fetchSelectedTable still unavailable after wait");
+          if (grist.docApi && typeof grist.docApi.fetchSelectedTable === "function") {
+            const table = await grist.docApi.fetchSelectedTable();
+            const cols = (table && table.columns) ? table.columns : [];
+            if (cols.length) {
+              state.columnsMeta = normalizeMetaFromColumns(cols);
+              gristTablesColumnCache = null;
+            }
+            await enrichColumnDescriptionsFromGristMeta();
             return;
           }
-          const table = await grist.docApi.fetchSelectedTable();
-          const cols = (table && table.columns) ? table.columns : [];
-          if (cols.length) {
-            state.columnsMeta = normalizeMetaFromColumns(cols);
-            gristTablesColumnCache = null;
-          }
-          void enrichColumnDescriptionsFromGristMeta().then(() => {
-            recomputeAndRender();
-          });
         } catch (err) {
           console.warn("Could not load table metadata via docApi", err);
         }
       }
 
       let columnDescEnrichTimer = null;
-      /** After widget options / linking change, docApi may expose the table — refresh schema once. */
-      let columnMetaAfterOptionsTimer = null;
-
       function scheduleColumnDescriptionEnrich() {
         if (!state.hasGrist || !window.grist) return;
         clearTimeout(columnDescEnrichTimer);
@@ -1537,8 +1514,6 @@
       }
 
       function wireInputs() {
-        if (state.inputsWired) return;
-        state.inputsWired = true;
         els.includeRegex.addEventListener("input", () => {
           state.config.includeRegex = els.includeRegex.value;
           persistOptions();
@@ -1601,43 +1576,24 @@
         });
       }
 
-      async function wireGrist() {
+      function wireGrist() {
         if (!state.hasGrist || !window.grist) {
           renderStatus("Grist API not found. Open this file as a Grist custom widget.");
           return;
         }
-        if (state.gristWireDone) {
-          return;
-        }
-        let readyPromise = Promise.resolve();
         try {
-          /* "full" needed for docApi.fetchTable on _grist_* metadata; matches typical production custom widgets. */
-          const r = grist.ready({ requiredAccess: "full" });
-          if (r && typeof r.then === "function") {
-            readyPromise = Promise.resolve(r);
-          }
+          grist.ready({ requiredAccess: "read table" });
         } catch (err) {
           console.warn("grist.ready failed, continuing in safe mode", err);
           renderStatus("Grist host handshake delayed. Retrying automatically...");
           return;
         }
-        try {
-          await readyPromise;
-        } catch (err) {
-          console.warn("grist.ready promise rejected", err);
-          return;
-        }
-        state.gristWireDone = true;
 
         if (typeof grist.onOptions === "function") {
           if (!state.isBuilderHost) {
             grist.onOptions((options) => {
               applyLoadedOptions(options || {});
               recomputeAndRender();
-              clearTimeout(columnMetaAfterOptionsTimer);
-              columnMetaAfterOptionsTimer = setTimeout(() => {
-                void tryLoadColumnsMeta().then(() => recomputeAndRender());
-              }, 200);
             });
           } else {
             state.optionsApiAvailable = false;
@@ -1669,30 +1625,21 @@
           const localOptions = loadLocalOptions();
           if (localOptions) applyLoadedOptions(localOptions);
         }
-        if (!state.uiShellWired) {
-          wireInputs();
-          wireTooltip();
-          wireDebugWindowDrag();
-          state.uiShellWired = true;
-        }
-        await wireGrist();
+        wireInputs();
+        wireTooltip();
+        wireDebugWindowDrag();
+        wireGrist();
         await tryLoadColumnsMeta();
         recomputeAndRender();
         els.debugToggle.style.display = state.settingsVisible ? "flex" : "none";
       }
-      /**
-       * If `grist` is missing (e.g. Live Server), still run `init()` so the UI shell is wired.
-       * Poll for late injection; second `init()` relies on `uiShellWired` / `gristWireDone`.
-       */
       function waitForGristAndInit() {
-        const gristReady = window.grist && typeof window.grist.ready === "function";
-        if (gristReady) {
+        if (window.grist && typeof window.grist.ready === "function") {
           state.hasGrist = true;
           init();
           return;
         }
         state.hasGrist = false;
-        init();
         renderStatus("Waiting for Grist host...");
         let attempts = 0;
         const maxAttempts = 40;

@@ -5,7 +5,7 @@ Tre filoni distinti: **flicker del grafico** (record parziali vs merge), **descr
 ## Riferimento rapido
 
 - **Live Server / pagina senza `window.grist` sul primo tick:** il vecchio bootstrap chiamava `init()` (e quindi `wireInputs()`) solo quando `grist.ready` era già disponibile. Senza Grist, dopo il timeout del poll **`init()` non veniva mai eseguito** → nessun listener su ⚙/🐞. **Fix risolutivo:** chiamare comunque **`init()` subito** quando manca Grist, così la shell UI è cablata; usare **`state.uiShellWired`** per non duplicare tooltip/drag/listener input se `init()` viene richiamato quando Grist compare dopo; usare **`state.gristWireDone`** dopo un `grist.ready` riuscito così **`grist.ready` e gli handler Grist non si registrano due volte**.
-- **Iframe Grist (produzione):** `position: fixed` fuori dal root del widget + `transform` / stacking sugli antenati può far sì che i controlli siano visibili ma **non ricevano** i click. **Fix strutturale (separato):** controlli con `position: absolute` **dentro** `.app`, `z-index` alto, selettori corretti (es. `.app.settings-hidden .debug-toggle` se il toggle è figlio di `.app`).
+- **Chrome UI (⚙ / 🐞 / pannello debug):** layout come versione “originale”: **`position: fixed`** al **viewport** (pulsanti sempre in basso a sinistra anche se `.app` è più alto dello schermo; con **`absolute`** rispetto a `.app` scorrevano via col contenuto). DOM: pulsanti e `#debugWindow` **sibling** di `.app` (non dentro), selettore **`.app.settings-hidden ~ .debug-toggle`**. `z-index` 1100/1200. In iframe rari casi di stacking/`transform` sugli antenati possono ancora influenzare il hit-test: se succede, diagnosticare per quel host.
 
 ---
 
@@ -20,14 +20,13 @@ I pulsanti **impostazioni** (⚙) e **debug** (🐞) non reagivano ai click. Si 
 1. **Listener mai registrati (caso Live Server / assenza di `window.grist` al bootstrap):**  
    `waitForGristAndInit()` chiamava `init()` **solo** quando `window.grist` e `grist.ready` erano già presenti. Senza Grist, il timer andava in timeout e **`init()` non veniva mai eseguito** → **`wireInputs()` non girava mai** → i toggle **non avevano handler `click`**. Non era un problema solo di CSS: **non c’era nulla da “cliccare” a livello di logica.**
 
-2. **Hit-test rotto nell’iframe (Grist in produzione):**  
-   Controlli con `position: fixed` fuori dalla radice di stacking del widget, insieme a `transform` sugli antenati, possono rendere gli elementi visibili ma **non target di hit-test**. Qui servono DOM/CSS corretti (controlli **dentro** `.app`, `position: absolute`, stacking alto). Questo **non** risolve (1) se `init()` non parte.
+2. **Aspetto / posizione dei FAB:** con **`position: absolute`** in basso rispetto a `.app`, se il contenuto supera l’altezza dello schermo i pulsanti **escono dalla vista** (stesso blocco di scroll). La UI “migliore” usa **`position: fixed`** al viewport e (opzionale) DOM sibling di `.app`. Questo è **indipendente** da (1): senza `init()` i click non partono comunque.
 
 ### Cosa è stato provato prima del fix finale (non risolveva il caso “`init()` mai chiamato”)
 
 - Retry e tempistiche su `grist.docApi`, `requiredAccess: "full"`, `grist.ready`.
 - Aumento `z-index`, prove su `pointer-events`, spostamento dei controlli nel DOM.
-- Spostamento di ⚙/🐞 e del pannello debug **dentro** `.app` e passaggio da **`position: fixed`** a **`position: absolute`** (utile per (2) in iframe; **non** sostituisce (1) se `init()` non viene invocato).
+- Variante intermedia: controlli **dentro** `.app` con **`position: absolute`** (migliora stacking in alcuni iframe ma i FAB possono **scrollare** via se `.app` è alto; **non** sostituisce (1) se `init()` non viene invocato).
 - Log nella finestra debug del widget e probe nella **console sviluppatore** (`elementFromPoint`, `pointerdown` in capture) per ipotesi overlay — utili per distinguere (1) vs (2), ma **non** sostituiscono il cablaggio di `init()`.
 
 ### Fix finale (quello che ha risolto il problema percepito dall’utente)
@@ -36,7 +35,7 @@ I pulsanti **impostazioni** (⚙) e **debug** (🐞) non reagivano ai click. Si 
 - **Evitare doppie registrazioni:**  
   - **`state.uiShellWired`:** cabla una sola volta input + tooltip + drag della finestra debug; se `init()` viene richiamato quando Grist compare dopo, non si duplicano listener sulla canvas o sul drag.  
   - **`state.gristWireDone`:** dopo un `grist.ready` riuscito, non si ripete la registrazione di `grist.ready` e degli handler.
-- **Mantenere** la correzione CSS/DOM per l’embed: controlli dentro `.app`, `position: absolute`, stacking alto (per (2)).
+- **Chrome UI:** ripristinare **`position: fixed`**, sibling di `.app`, e `z-index` coerenti (comportamento FAB sul viewport).
 
 ### Nota per agenti futuri
 
