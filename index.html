@@ -133,7 +133,7 @@
     }
     .config-row {
       display: grid;
-      grid-template-columns: 12px 1fr 1fr 70px;
+      grid-template-columns: 1fr 1fr 70px 12px;
       gap: 6px;
       align-items: center;
       margin-bottom: 6px;
@@ -145,6 +145,7 @@
       line-height: 1;
       user-select: none;
       text-align: center;
+      justify-self: end;
     }
     .config-drag-handle:active {
       cursor: grabbing;
@@ -158,6 +159,10 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+    .config-row input[type="text"],
+    .config-row input[type="color"] {
+      touch-action: manipulation;
     }
     input[type="color"] {
       width: 100%;
@@ -468,7 +473,7 @@
   <script>
     (function () {
       /** Bump this string when the user explicitly asks for a version update (release label). */
-      const WIDGET_VERSION = "2026.04.19";
+      const WIDGET_VERSION = "2026.04.20";
 
       const DEFAULT_COLORS = [
         "#2563eb", "#dc2626", "#16a34a", "#ca8a04", "#7c3aed",
@@ -1183,6 +1188,7 @@
           const labelInput = document.createElement("input");
           labelInput.type = "text";
           labelInput.placeholder = "Custom label";
+          labelInput.setAttribute("draggable", "false");
           labelInput.value = state.config.customLabels[col.key] || "";
           labelInput.addEventListener("input", () => {
             const val = labelInput.value.trim();
@@ -1201,10 +1207,10 @@
             recomputeAndRender();
           });
 
-          row.appendChild(handle);
           row.appendChild(name);
           row.appendChild(labelInput);
           row.appendChild(colorInput);
+          row.appendChild(handle);
           els.selectedConfig.appendChild(row);
         }
       }
@@ -1464,7 +1470,9 @@
         state.isApplyingRemoteOptions = true;
         state.config = nextConfig;
         state.lastAppliedOptionsJson = nextJson;
-        state.lastRenderedSelectedKeysSig = null;
+        // Do not clear lastRenderedSelectedKeysSig here: grist.onOptions echoes every save and would
+        // rebuild the selected-column rows, destroying focused label inputs (mobile keyboard closes).
+        // maybeRenderSelectedConfig already refreshes when resolved column keys/order change.
         els.includeRegex.value = state.config.includeRegex;
         els.excludeRegex.value = state.config.excludeRegex;
         els.numberPrefix.value = state.config.numberPrefix;
@@ -1714,9 +1722,29 @@
           persistOptions();
           recomputeAndRender();
         });
-        els.numberDecimals.addEventListener("input", () => {
-          state.config.numberDecimals = sanitizeDecimals(els.numberDecimals.value);
+        function syncDecimalsFieldFromState() {
           els.numberDecimals.value = String(state.config.numberDecimals);
+        }
+        els.numberDecimals.addEventListener("input", () => {
+          const raw = els.numberDecimals.value;
+          if (String(raw).trim() === "") {
+            return;
+          }
+          const n = Number.parseInt(raw, 10);
+          if (!Number.isFinite(n)) {
+            return;
+          }
+          const clamped = Math.min(6, Math.max(0, n));
+          state.config.numberDecimals = clamped;
+          if (String(clamped) !== String(raw).trim()) {
+            syncDecimalsFieldFromState();
+          }
+          persistOptions();
+          recomputeAndRender();
+        });
+        els.numberDecimals.addEventListener("blur", () => {
+          state.config.numberDecimals = sanitizeDecimals(els.numberDecimals.value);
+          syncDecimalsFieldFromState();
           persistOptions();
           recomputeAndRender();
         });
