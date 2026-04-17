@@ -31,9 +31,28 @@
     }
     .panel {
       border-right: 1px solid var(--border);
-      padding: 12px;
-      overflow: auto;
+      padding: 0;
       background: var(--panel);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      align-self: stretch;
+    }
+    .panel-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: auto;
+      padding: 12px;
+    }
+    .panel-version {
+      flex-shrink: 0;
+      margin-top: auto;
+      padding: 8px 12px 10px;
+      border-top: 1px solid var(--border);
+      font-size: 10px;
+      line-height: 1.35;
+      color: var(--muted);
+      text-align: left;
     }
     .app.settings-hidden .panel {
       display: none;
@@ -347,6 +366,7 @@
 <body>
   <div class="app">
     <aside class="panel">
+      <div class="panel-body">
       <h1>Wide Row Pie</h1>
       <div class="field">
         <label for="includeRegex">Include regex (optional)</label>
@@ -379,6 +399,10 @@
         <input id="numberDecimals" type="text" placeholder="2" />
         <div class="hint">Use values from 0 to 6.</div>
       </div>
+      </div>
+      <footer class="panel-version" id="widgetVersionFooter" aria-label="Widget version">
+        <span id="widgetVersionLabel">Wide Pie</span> <span id="widgetVersion">—</span>
+      </footer>
     </aside>
 
     <main class="main">
@@ -411,6 +435,9 @@
 
   <script>
     (function () {
+      /** Bump this string when the user explicitly asks for a version update (release label). */
+      const WIDGET_VERSION = "2026.04.16";
+
       const DEFAULT_COLORS = [
         "#2563eb", "#dc2626", "#16a34a", "#ca8a04", "#7c3aed",
         "#0f766e", "#c2410c", "#be185d", "#4b5563", "#1d4ed8",
@@ -501,6 +528,11 @@
         closeDebugLog: document.getElementById("closeDebugLog")
       };
 
+      (function applyWidgetVersion() {
+        const el = document.getElementById("widgetVersion");
+        if (el) el.textContent = "v" + WIDGET_VERSION;
+      })();
+
       const ctx = els.canvas.getContext("2d");
       const DEBUG_ENABLED = true;
       const debugLines = [];
@@ -548,6 +580,7 @@
           d.gristReadyOk === null ? "n/a" : d.gristReadyOk ? "ok" : "fail" + (d.gristReadyErr ? ": " + d.gristReadyErr : "");
         const diagBlock = [
           "--- Diagnostics (paste for support) ---",
+          "version: " + WIDGET_VERSION,
           "opened: " + (d.openedAt || "—"),
           "location: " + (loc.length > 180 ? loc.slice(0, 180) + "…" : loc),
           "builder: " + (state.isBuilderHost ? "yes" : "no"),
