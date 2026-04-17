@@ -341,8 +341,6 @@
       color: #cbd5e1;
       white-space: pre-wrap;
       word-break: break-word;
-      max-height: min(320px, 45vh);
-      overflow: auto;
     }
     .debug-body {
       margin: 0;
@@ -438,7 +436,7 @@
   <script>
     (function () {
       /** Bump this string when the user explicitly asks for a version update (release label). */
-      const WIDGET_VERSION = "2026.04.17";
+      const WIDGET_VERSION = "2026.04.18";
 
       const DEFAULT_COLORS = [
         "#2563eb", "#dc2626", "#16a34a", "#ca8a04", "#7c3aed",
@@ -479,30 +477,9 @@
         inputsWired: false,
         /** Shell UI (tooltip, debug drag) wired once; init may run twice when Grist loads after first paint. */
         uiShellWired: false,
-        gristWireDone: false,
-        /** Filled for the debug panel “paste for support” block (production diagnostics). */
-        diagnostic: {
-          openedAt: "",
-          gristReadyOk: null,
-          gristReadyErr: null,
-          hasOnRecord: null,
-          hasOnRecords: null,
-          hasOnOptions: null,
-          hasSetOptions: null,
-          onRecordN: 0,
-          onRecordsN: 0,
-          onOptionsN: 0,
-          lastOnRecordAt: null,
-          lastOnRecordsAt: null,
-          lastOnOptionsAt: null,
-          docApiStatus: null,
-          fetchSelectedTableCols: null,
-          tryLoadMetaErr: null,
-          lastAdoptFieldCount: null
-        }
+        gristWireDone: false
       };
       state.isBuilderHost = window.location.pathname.includes("/grist-widget/custom-widget-builder/");
-      state.diagnostic.openedAt = new Date().toISOString();
 
       const els = {
         app: document.querySelector(".app"),
@@ -576,41 +553,11 @@
         } else {
           chartLine = "Chart — (no columns selected)";
         }
-        const d = state.diagnostic;
-        const loc = (window.location.pathname || "") + (window.location.search || "");
-        const readyStr =
-          d.gristReadyOk === null ? "n/a" : d.gristReadyOk ? "ok" : "fail" + (d.gristReadyErr ? ": " + d.gristReadyErr : "");
-        const diagBlock = [
-          "--- Diagnostics (paste for support) ---",
-          "version: " + WIDGET_VERSION,
-          "opened: " + (d.openedAt || "—"),
-          "location: " + (loc.length > 180 ? loc.slice(0, 180) + "…" : loc),
-          "builder: " + (state.isBuilderHost ? "yes" : "no"),
-          "grist: hasGrist=" + !!state.hasGrist + " | wireDone=" + !!state.gristWireDone + " | ready=" + readyStr,
-          "API: onRecord=" + (d.hasOnRecord == null ? "?" : d.hasOnRecord ? "yes" : "no") +
-            " | onRecords=" + (d.hasOnRecords == null ? "?" : d.hasOnRecords ? "yes" : "no") +
-            " | onOptions=" + (d.hasOnOptions == null ? "?" : d.hasOnOptions ? "yes" : "no") +
-            " | setOptions=" + (d.hasSetOptions == null ? "?" : d.hasSetOptions ? "yes" : "no"),
-          "docApi: " + (d.docApiStatus || "not_run_yet") +
-            (d.fetchSelectedTableCols != null ? " | fetchSelectedTable columns=" + d.fetchSelectedTableCols : "") +
-            (d.tryLoadMetaErr ? " | err: " + d.tryLoadMetaErr : ""),
-          "events: onRecord×" + d.onRecordN + " onRecords×" + d.onRecordsN + " onOptions×" + d.onOptionsN,
-          "last: onRecord=" + (d.lastOnRecordAt || "—") + " | onRecords=" + (d.lastOnRecordsAt || "—") + " | onOptions=" + (d.lastOnOptionsAt || "—"),
-          "record: rowId=" + (rid != null && rid !== undefined ? String(rid) : "—") +
-            " | fieldKeys≈" + (d.lastAdoptFieldCount != null ? String(d.lastAdoptFieldCount) : "—") +
-            " | columnsMeta=" + meta +
-            " | activeRecord=" + (state.activeRecord ? "yes" : "no"),
-          "viewport: " + (typeof window !== "undefined" ? window.innerWidth + "×" + window.innerHeight : "—") +
-            " | ua: " + (typeof navigator !== "undefined" && navigator.userAgent
-              ? navigator.userAgent.slice(0, 160) + (navigator.userAgent.length > 160 ? "…" : "")
-              : "—")
-        ].join("\n");
         els.debugSummary.textContent = [
           (state.isBuilderHost ? "Builder" : "Page") + " · options " + persist,
           "Row " + (rid != null && rid !== undefined ? String(rid) : "—") + " · " + resolved + " in pie · " + meta + " cols in meta",
           chartLine,
-          "",
-          diagBlock
+          "Version v" + WIDGET_VERSION
         ].join("\n");
       }
 
@@ -753,14 +700,6 @@
           return record.fields;
         }
         return record;
-      }
-
-      function countRecordFieldsForDiag(record) {
-        const o = getRecordFieldObject(record);
-        if (!o || typeof o !== "object") return 0;
-        return Object.keys(o).filter(function (k) {
-          return k !== "fields";
-        }).length;
       }
 
       function getRecordRowId(record) {
@@ -1363,11 +1302,7 @@
 
       function adoptActiveRecord(record) {
         state.activeRecord = record ? mergeGristRecords(state.activeRecord, record) : null;
-        if (!state.activeRecord) {
-          state.diagnostic.lastAdoptFieldCount = 0;
-          return;
-        }
-        state.diagnostic.lastAdoptFieldCount = countRecordFieldsForDiag(state.activeRecord);
+        if (!state.activeRecord) return;
         if (!state.columnsMeta.length) {
           state.columnsMeta = buildMetaFromRecord(state.activeRecord);
           scheduleColumnDescriptionEnrich();
@@ -1593,10 +1528,7 @@
       }
 
       async function tryLoadColumnsMeta() {
-        if (!state.hasGrist || !window.grist) {
-          state.diagnostic.docApiStatus = "skipped_no_grist";
-          return;
-        }
+        if (!state.hasGrist || !window.grist) return;
         const deadline = Date.now() + 8000;
         while (Date.now() < deadline) {
           if (grist.docApi && typeof grist.docApi.fetchSelectedTable === "function") break;
@@ -1604,19 +1536,11 @@
         }
         try {
           if (!grist.docApi || typeof grist.docApi.fetchSelectedTable !== "function") {
-            state.diagnostic.docApiStatus = "timeout_8s_no_fetchSelectedTable";
-            state.diagnostic.tryLoadMetaErr = "docApi.fetchSelectedTable missing after 8s wait";
-            debugLog("tryLoadColumnsMeta", state.diagnostic.docApiStatus);
             console.warn("Wide Pie: grist.docApi.fetchSelectedTable still unavailable after wait");
             return;
           }
-          state.diagnostic.docApiStatus = "fetching";
           const table = await grist.docApi.fetchSelectedTable();
           const cols = (table && table.columns) ? table.columns : [];
-          state.diagnostic.fetchSelectedTableCols = cols.length;
-          state.diagnostic.tryLoadMetaErr = null;
-          state.diagnostic.docApiStatus = "ok";
-          debugLog("fetchSelectedTable", { columns: cols.length });
           if (cols.length) {
             state.columnsMeta = normalizeMetaFromColumns(cols);
             gristTablesColumnCache = null;
@@ -1625,9 +1549,6 @@
             recomputeAndRender();
           });
         } catch (err) {
-          state.diagnostic.docApiStatus = "error";
-          state.diagnostic.tryLoadMetaErr = err && err.message ? String(err.message) : String(err);
-          debugLog("tryLoadColumnsMeta error", state.diagnostic.tryLoadMetaErr);
           console.warn("Could not load table metadata via docApi", err);
         }
       }
@@ -1718,33 +1639,15 @@
           /* "full" needed for docApi.fetchTable on _grist_* metadata; matches typical production custom widgets. */
           grist.ready({ requiredAccess: "full" });
         } catch (err) {
-          state.diagnostic.gristReadyOk = false;
-          state.diagnostic.gristReadyErr = err && err.message ? String(err.message) : String(err);
-          debugLog("grist.ready failed", state.diagnostic.gristReadyErr);
           console.warn("grist.ready failed, continuing in safe mode", err);
           renderStatus("Grist host handshake delayed. Retrying automatically...");
           return;
         }
         state.gristWireDone = true;
-        state.diagnostic.gristReadyOk = true;
-        state.diagnostic.gristReadyErr = null;
-        state.diagnostic.hasOnRecord = typeof grist.onRecord === "function";
-        state.diagnostic.hasOnRecords = typeof grist.onRecords === "function";
-        state.diagnostic.hasOnOptions = typeof grist.onOptions === "function";
-        state.diagnostic.hasSetOptions = typeof grist.setOptions === "function";
-        debugLog("grist.ready ok", {
-          onRecord: state.diagnostic.hasOnRecord,
-          onRecords: state.diagnostic.hasOnRecords,
-          onOptions: state.diagnostic.hasOnOptions,
-          setOptions: state.diagnostic.hasSetOptions
-        });
 
         if (typeof grist.onOptions === "function") {
           if (!state.isBuilderHost) {
             grist.onOptions((options) => {
-              state.diagnostic.onOptionsN += 1;
-              state.diagnostic.lastOnOptionsAt = new Date().toISOString();
-              debugLog("onOptions", { n: state.diagnostic.onOptionsN });
               applyLoadedOptions(options || {});
               recomputeAndRender();
             });
@@ -1757,11 +1660,6 @@
 
         if (typeof grist.onRecord === "function") {
           grist.onRecord((record) => {
-            state.diagnostic.onRecordN += 1;
-            state.diagnostic.lastOnRecordAt = new Date().toISOString();
-            if (state.diagnostic.onRecordN <= 3) {
-              debugLog("onRecord", { n: state.diagnostic.onRecordN, hasRecord: !!record });
-            }
             adoptActiveRecord(record);
             recomputeAndRender();
           });
@@ -1771,11 +1669,6 @@
           grist.onRecords((records) => {
             const list = Array.isArray(records) ? records : [];
             const first = list.length > 0 ? list[0] : null;
-            state.diagnostic.onRecordsN += 1;
-            state.diagnostic.lastOnRecordsAt = new Date().toISOString();
-            if (state.diagnostic.onRecordsN <= 3) {
-              debugLog("onRecords", { n: state.diagnostic.onRecordsN, len: list.length });
-            }
             adoptActiveRecord(first);
             recomputeAndRender();
           });
@@ -1799,10 +1692,7 @@
         recomputeAndRender();
         els.debugToggle.style.display = state.settingsVisible ? "flex" : "none";
       }
-      /**
-       * If `grist` is missing (e.g. Live Server), still run `init()` so the UI shell is wired.
-       * Poll for late injection; second `init()` relies on `uiShellWired` / `gristWireDone`.
-       */
+      /** No `grist` on first tick: run `init()` for UI shell, then poll until `grist.ready` exists. */
       function waitForGristAndInit() {
         const gristReady = window.grist && typeof window.grist.ready === "function";
         if (gristReady) {

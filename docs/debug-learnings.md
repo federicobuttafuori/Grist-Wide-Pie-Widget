@@ -46,6 +46,43 @@ I pulsanti **impostazioni** (⚙) e **debug** (🐞) non reagivano ai click. Si 
 
 ---
 
+## Incident: nessuna colonna / `hasGrist=false` in produzione (URL ospitato)
+
+### Problema originale
+
+In **produzione** (widget caricato come URL, es. `/Grist-Wide-Pie-Widget/?access=full…`): **nessuna colonna** in meta, grafico **“waiting for row”**, sidebar senza elenco colonne utile. Nei log compariva **`grist: hasGrist=false`**, **`wireDone=false`**, **`docApi: skipped_no_grist`**. L’utente aveva già concesso **accesso** al documento; sembrava un problema di permessi o di bootstrap.
+
+### Bug reale e causa
+
+Il file HTML **non includeva** lo script ufficiale che crea **`window.grist`**. La [documentazione Grist per custom widget](https://support.getgrist.com/widget-custom/) richiede esplicitamente:
+
+`https://docs.getgrist.com/grist-plugin-api.js`
+
+Senza quel file, nel contesto del widget **non esiste mai** l’oggetto `grist` → nessun `grist.ready`, nessun `onRecord`, nessun `docApi.fetchSelectedTable`, **indipendentemente** da `access=full` nell’URL o dalle impostazioni del documento. Non era un bug di permessi: era **API assente nella pagina**.
+
+### Cosa è stato provato prima del fix finale (non risolveva la causa radice)
+
+- Ritentativi su `docApi`, `requiredAccess: "full"`, ordine di `init` / `wireGrist`.
+- Blocco **Diagnostics** nel pannello debug (contatori eventi, UA, viewport) — utile per **vedere** `hasGrist=false`, ma **non** sostituisce la presenza dello script plugin.
+- Ipotesi “permessi” o “tabella non collegata” senza verificare prima se `window.grist` esiste nel frame del widget.
+
+### Fix finale
+
+Aggiungere **nel markup**, **prima** dello script principale del widget, una riga del tipo:
+
+`<script src="https://docs.getgrist.com/grist-plugin-api.js"></script>`
+
+(Caricamento sincrono in coda al `body` va bene: lo script viene eseguito prima dell’IIFE del widget.)  
+**Self-hosted:** se la CSP blocca `docs.getgrist.com`, usare l’URL del `grist-plugin-api.js` servito dal proprio server Grist.
+
+### Nota per agenti futuri
+
+- Se **`hasGrist=false`** e il widget è servito come **file/URL proprio**, la prima verifica è: **è incluso `grist-plugin-api.js`?** — non solo “è in Grist?”.
+- **`access=full` nell’URL** non inietta l’API: serve solo lo script documentato.
+- Dopo il fix, i sintomi attesi sono `hasGrist=true`, `wireDone=true`, colonne da `fetchSelectedTable` quando la tabella è collegata.
+
+---
+
 ## 1. Flicker del grafico (record parziali)
 
 ### Problema originale
