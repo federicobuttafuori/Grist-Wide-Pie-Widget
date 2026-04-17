@@ -459,7 +459,7 @@
   </style>
 </head>
 <body>
-  <div class="app">
+  <div class="app settings-hidden">
     <aside class="panel">
       <div
         class="panel-resizer"
@@ -520,7 +520,7 @@
       </div>
     </main>
   </div>
-  <button id="settingsToggle" class="settings-toggle" type="button" title="Hide settings" aria-label="Toggle settings">⚙</button>
+  <button id="settingsToggle" class="settings-toggle" type="button" title="Show settings" aria-label="Show settings">⚙</button>
   <button id="debugToggle" class="debug-toggle" type="button" title="Show debug logs" aria-label="Show debug logs">🐞</button>
   <section id="debugWindow" class="debug-window" aria-live="polite">
     <div class="debug-header">
@@ -573,7 +573,7 @@
         pieData: [],
         pieGeometry: [],
         manualSearch: "",
-        settingsVisible: true,
+        settingsVisible: false,
         hasGrist: typeof window.grist !== "undefined",
         isSavingOptions: false,
         isApplyingRemoteOptions: false,
