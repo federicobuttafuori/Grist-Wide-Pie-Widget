@@ -2,6 +2,61 @@
 
 Tre filoni distinti: **flicker del grafico** (record parziali vs merge), **descrizioni colonna in legenda** (metadati `_grist_Tables_column` vs tabella attiva nel builder), e **toggle UI non rispondenti** (bootstrap `init` vs CSS in iframe).
 
+---
+
+## Incident (cross-project): ordini Stripe non creati su Grist
+
+### Problema originale
+
+Pagamento Stripe completato ma:
+- nessun ordine creato in Grist (`T91_Ordini`)
+- nessuna email di conferma/notifica admin (dipendevano dal ramo "ordine creato")
+
+### Causa reale del bug
+
+Il backend inviava in `Prodotti` una RefList con record `T9_Magazzino` già referenziati in ordini precedenti.  
+In questo schema Grist scattava:
+- `UniqueReferenceError UNIQUE reference constraint violated`
+
+Quindi il create ordine falliva con `400` nel webhook.
+
+### Evidenza runtime decisiva
+
+Nei log:
+- `duplicates: 0` su `product_record_ids` (quindi non era duplicazione interna payload)
+- `existingOrdersWithSamePaymentIntent: 0` (quindi non era replay stesso payment intent)
+- `existingOrdersUsingSameProducts: [{ orderId: 97, ... }]` (riuso effettivo di record già collegati)
+- errore create persistente: `UniqueReferenceError`
+
+### Fix finale applicato
+
+Nel calcolo carrello server-side:
+- prima del create ordine legge `T91_Ordini`
+- costruisce il set dei `Prodotti` già collegati
+- seleziona solo record prodotto non ancora linkati
+- se i record liberi non bastano, fallisce in modo esplicito con errore chiaro (invece di inviare payload invalido a Grist)
+
+### Apprendimento operativo
+
+Quando si usa una colonna `RefList` in Grist, non assumere che i record possano essere riutilizzati infinite volte: validare sempre i vincoli reali dello schema con evidenza runtime e non solo con i tipi colonna dichiarati.
+
+### Follow-up: mismatch carrello vs magazzino (r_uid)
+
+#### Problema
+- In checkout alcuni prodotti risultavano "non disponibili" anche se in magazzino esisteva una variante disponibile dello stesso gusto/peso.
+- Log tipico: `Prodotti non disponibili ... codici_candidati: ...`.
+
+#### Causa
+- Il carrello passava un `r_uid` storico (es. lotto/versione precedente ricetta).
+- Il backend cercava prima per `gusto+peso+r_uid` e trovava solo record vecchi (spesso già venduti/occupati), escludendo la variante nuova disponibile con stesso `gusto+peso` ma `r_uid` diverso.
+
+#### Fix
+- In `validateAndCalculateCart`, quando non ci sono record disponibili nel match iniziale, il backend allarga il match a tutti i record con stesso `gusto+peso` (ignorando `r_uid`) e poi applica i vincoli di disponibilità/record già collegati.
+- Se anche dopo l'allargamento non ci sono pezzi liberi, ritorna errore esplicito (nessun ordine sporco).
+
+#### Learnings
+- `r_uid` è utile come preferenza, ma non deve bloccare la vendita se il prodotto commerciale è ancora lo stesso (gusto+peso) e la disponibilità reale è su una variante di lotto/versione diversa.
+
 ## Riferimento rapido
 
 - **Widget servito come URL (es. Pages / hosting proprio):** senza `<script src="https://docs.getgrist.com/grist-plugin-api.js">` (o equivalente sullo stesso host Grist) **`window.grist` non esiste** → `hasGrist=false`, nessun `grist.ready`, nessuna colonna. La documentazione Grist richiede questo script nel markup del custom widget.

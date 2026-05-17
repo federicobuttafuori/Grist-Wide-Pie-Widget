@@ -159,10 +159,19 @@
     }
     .config-row {
       display: grid;
-      grid-template-columns: 1fr 1fr 70px 12px;
+      grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr) minmax(0, 0.85fr) 70px 12px;
       gap: 6px;
       align-items: center;
       margin-bottom: 6px;
+    }
+    .config-row select {
+      font-size: 12px;
+      padding: 4px 6px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fff;
+      min-width: 0;
+      width: 100%;
     }
     .config-drag-handle {
       cursor: grab;
@@ -563,6 +572,8 @@
           numberPrefix: "",
           numberDecimals: 2,
           customLabels: {},
+          /** Per slice key: column id whose cell value is the slice label. */
+          labelSourceColumns: {},
           customColors: {},
           /** Order of column keys for pie, legend, and the selected-columns list UI. */
           columnDisplayOrder: []
@@ -689,6 +700,7 @@
           numberPrefix: typeof state.config.numberPrefix === "string" ? state.config.numberPrefix : "",
           numberDecimals: sanitizeDecimals(state.config.numberDecimals),
           customLabels: isPlainObject(state.config.customLabels) ? state.config.customLabels : {},
+          labelSourceColumns: sanitizeLabelSourceColumns(state.config.labelSourceColumns),
           customColors: isPlainObject(state.config.customColors) ? state.config.customColors : {},
           columnDisplayOrder: sanitizeColumnDisplayOrder(state.config.columnDisplayOrder)
         };
@@ -795,6 +807,80 @@
           }
         }
         return out;
+      }
+
+      function sanitizeLabelSourceColumns(input) {
+        if (!isPlainObject(input)) return {};
+        const out = {};
+        for (const key of Object.keys(input)) {
+          const sliceKey = typeof key === "string" ? key.trim() : "";
+          const colId = typeof input[key] === "string" ? input[key].trim() : "";
+          if (sliceKey && colId) out[sliceKey] = colId;
+        }
+        return out;
+      }
+
+      function formatCellAsLabel(raw) {
+        if (raw === null || raw === undefined) return "";
+        if (typeof raw === "string") return raw.trim();
+        if (typeof raw === "number" && Number.isFinite(raw)) return String(raw);
+        if (typeof raw === "boolean") return raw ? "true" : "false";
+        if (Array.isArray(raw)) {
+          if (raw.length >= 2) {
+            const display = raw[1];
+            if (typeof display === "string") return display.trim();
+            if (typeof display === "number" && Number.isFinite(display)) return String(display);
+          }
+          if (raw.length === 1) return formatCellAsLabel(raw[0]);
+          return "";
+        }
+        if (typeof raw === "object") {
+          if (typeof raw.label === "string") return raw.label.trim();
+          if (typeof raw.name === "string") return raw.name.trim();
+          return "";
+        }
+        return "";
+      }
+
+      function resolveSliceLabel(col, record) {
+        const custom = state.config.customLabels[col.key];
+        if (typeof custom === "string" && custom.trim()) return custom.trim();
+
+        const labelColId = state.config.labelSourceColumns[col.key];
+        if (typeof labelColId === "string" && labelColId.trim()) {
+          const fromCell = formatCellAsLabel(getRecordValue(record, labelColId.trim()));
+          if (fromCell) return fromCell;
+        }
+
+        if (col.label != null && String(col.label).trim()) return String(col.label).trim();
+        if (col.id != null && String(col.id).trim()) return String(col.id).trim();
+        return String(col.key || "");
+      }
+
+      function labelColumnOptionsHtml(selectedId) {
+        const cols = (state.columnsMeta || []).slice().sort(function (a, b) {
+          return String(a.label || a.id).localeCompare(String(b.label || b.id));
+        });
+        const knownIds = new Set(cols.map(function (m) { return String(m.id); }));
+        let html = '<option value="">Column name</option>';
+        if (selectedId && !knownIds.has(selectedId)) {
+          html += '<option value="' + escapeHtmlAttr(selectedId) + '" selected>' + escapeHtmlAttr(selectedId) + '</option>';
+        }
+        for (let i = 0; i < cols.length; i++) {
+          const m = cols[i];
+          const id = String(m.id);
+          const lab = String(m.label || m.id);
+          const sel = id === selectedId ? ' selected' : '';
+          html += '<option value="' + escapeHtmlAttr(id) + '"' + sel + '>' + escapeHtmlAttr(lab) + '</option>';
+        }
+        return html;
+      }
+
+      function escapeHtmlAttr(value) {
+        return String(value)
+          .replace(/&/g, "&amp;")
+          .replace(/"/g, "&quot;")
+          .replace(/</g, "&lt;");
       }
 
       function columnDescriptionFromGrist(col) {
@@ -1116,7 +1202,7 @@
           rows.push({
             key: col.key,
             columnId: col.id,
-            label: state.config.customLabels[col.key] || col.label || col.id,
+            label: resolveSliceLabel(col, rec),
             columnDescription: typeof col.description === "string" ? col.description : "",
             value: n,
             color: state.config.customColors[col.key] || colorForKey(col.key)
@@ -1334,9 +1420,23 @@
             }
           });
 
+          const labelColSelect = document.createElement("select");
+          labelColSelect.title = "Label from column (current row)";
+          labelColSelect.setAttribute("draggable", "false");
+          const labelColId = state.config.labelSourceColumns[col.key] || "";
+          labelColSelect.innerHTML = labelColumnOptionsHtml(labelColId);
+          labelColSelect.addEventListener("change", function () {
+            const picked = labelColSelect.value.trim();
+            if (picked) state.config.labelSourceColumns[col.key] = picked;
+            else delete state.config.labelSourceColumns[col.key];
+            persistOptions();
+            recomputeAndRender();
+          });
+
           const labelInput = document.createElement("input");
           labelInput.type = "text";
-          labelInput.placeholder = "Custom label";
+          labelInput.placeholder = "Override label";
+          labelInput.title = "Overrides column label when set";
           labelInput.setAttribute("draggable", "false");
           labelInput.value = state.config.customLabels[col.key] || "";
           labelInput.addEventListener("input", () => {
@@ -1357,6 +1457,7 @@
           });
 
           row.appendChild(name);
+          row.appendChild(labelColSelect);
           row.appendChild(labelInput);
           row.appendChild(colorInput);
           row.appendChild(handle);
@@ -1603,6 +1704,7 @@
       function applyLoadedOptions(options) {
         const incoming = (options && typeof options === "object") ? options : {};
         const customLabels = isPlainObject(incoming.customLabels) ? incoming.customLabels : {};
+        const labelSourceColumns = sanitizeLabelSourceColumns(incoming.labelSourceColumns);
         const customColors = isPlainObject(incoming.customColors) ? incoming.customColors : {};
         const nextConfig = {
           manualSelections: sanitizeManualSelections(incoming.manualSelections),
@@ -1611,6 +1713,7 @@
           numberPrefix: typeof incoming.numberPrefix === "string" ? incoming.numberPrefix : "",
           numberDecimals: sanitizeDecimals(incoming.numberDecimals),
           customLabels,
+          labelSourceColumns,
           customColors,
           columnDisplayOrder: sanitizeColumnDisplayOrder(incoming.columnDisplayOrder)
         };
