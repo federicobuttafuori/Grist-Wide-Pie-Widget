@@ -176,6 +176,14 @@
       opacity: 0.35;
       cursor: not-allowed;
     }
+    .config-row input[type="color"].config-value-color--unset::-webkit-color-swatch {
+      background: #fff;
+      border: 1px dashed #9ca3af;
+    }
+    .config-row input[type="color"].config-value-color--unset::-moz-color-swatch {
+      background: #fff;
+      border: 1px dashed #9ca3af;
+    }
     .config-row select {
       font-size: 12px;
       padding: 4px 6px;
@@ -1589,16 +1597,24 @@
 
           const valueColorInput = document.createElement("input");
           valueColorInput.type = "color";
+          valueColorInput.className = "config-value-color";
           valueColorInput.disabled = !labelValueKey;
+          const savedValueColor = labelValueKey ? state.config.labelValueColors[labelValueKey] : "";
+          const hasSavedValueColor = typeof savedValueColor === "string" && /^#[0-9a-fA-F]{6}$/.test(savedValueColor);
           if (labelValueKey) {
             valueColorInput.title = "Color for \"" + labelValueDisplay + "\" (global for this value)";
-            valueColorInput.value = normalizeColor(
-              state.config.labelValueColors[labelValueKey] || colorForKey(labelValueKey)
-            );
+            if (hasSavedValueColor) {
+              valueColorInput.value = normalizeColor(savedValueColor);
+            } else {
+              valueColorInput.value = "#ffffff";
+              valueColorInput.classList.add("config-value-color--unset");
+            }
             valueColorInput.addEventListener("input", function () {
+              valueColorInput.classList.remove("config-value-color--unset");
               previewLabelValueColor(labelValueKey, valueColorInput.value);
             });
             valueColorInput.addEventListener("change", function () {
+              valueColorInput.classList.remove("config-value-color--unset");
               previewLabelValueColor(labelValueKey, valueColorInput.value);
               persistOptions();
             });
@@ -1606,7 +1622,8 @@
             valueColorInput.title = labelColIdForColor
               ? "No label value on this row"
               : "Choose a label column first";
-            valueColorInput.value = "#2563eb";
+            valueColorInput.value = "#ffffff";
+            valueColorInput.classList.add("config-value-color--unset");
           }
 
           row.appendChild(name);
