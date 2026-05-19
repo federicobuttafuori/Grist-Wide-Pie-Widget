@@ -159,10 +159,22 @@
     }
     .config-row {
       display: grid;
-      grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr) minmax(0, 0.85fr) 70px 12px;
+      grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr) minmax(0, 0.85fr) 32px 32px 12px;
       gap: 6px;
       align-items: center;
       margin-bottom: 6px;
+    }
+    .config-row input[type="color"] {
+      width: 32px;
+      height: 28px;
+      padding: 0;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .config-row input[type="color"]:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
     }
     .config-row select {
       font-size: 12px;
@@ -575,6 +587,8 @@
           /** Per slice key: column id whose cell value is the slice label. */
           labelSourceColumns: {},
           customColors: {},
+          /** Global: label value key (ref:id or lbl:text) → color. */
+          labelValueColors: {},
           /** Order of column keys for pie, legend, and the selected-columns list UI. */
           columnDisplayOrder: []
         },
@@ -702,6 +716,7 @@
           customLabels: isPlainObject(state.config.customLabels) ? state.config.customLabels : {},
           labelSourceColumns: sanitizeLabelSourceColumns(state.config.labelSourceColumns),
           customColors: isPlainObject(state.config.customColors) ? state.config.customColors : {},
+          labelValueColors: sanitizeLabelValueColors(state.config.labelValueColors),
           columnDisplayOrder: sanitizeColumnDisplayOrder(state.config.columnDisplayOrder)
         };
       }
@@ -820,6 +835,40 @@
         return out;
       }
 
+      function sanitizeLabelValueColors(input) {
+        if (!isPlainObject(input)) return {};
+        const out = {};
+        for (const key of Object.keys(input)) {
+          const valueKey = typeof key === "string" ? key.trim() : "";
+          const hex = typeof input[key] === "string" ? input[key].trim() : "";
+          if (valueKey && /^#[0-9a-fA-F]{6}$/.test(hex)) out[valueKey] = hex;
+        }
+        return out;
+      }
+
+      /** Stable global key for a label cell (Ref row id preferred, else display text). */
+      function labelValueKeyFromCell(raw) {
+        if (raw === null || raw === undefined) return "";
+        if (Array.isArray(raw) && raw.length >= 1) {
+          const id = raw[0];
+          if (id !== null && id !== undefined && String(id).trim() !== "") {
+            return "ref:" + String(id).trim();
+          }
+        }
+        const label = formatCellAsLabel(raw);
+        if (label) return "lbl:" + label;
+        return "";
+      }
+
+      function labelValueKeyForSlice(col, record) {
+        if (!col || !record) return "";
+        const custom = state.config.customLabels[col.key];
+        if (typeof custom === "string" && custom.trim()) return "";
+        const labelColId = state.config.labelSourceColumns[col.key];
+        if (typeof labelColId !== "string" || !labelColId.trim()) return "";
+        return labelValueKeyFromCell(getRecordValue(record, labelColId.trim()));
+      }
+
       function formatCellAsLabel(raw) {
         if (raw === null || raw === undefined) return "";
         if (typeof raw === "string") return raw.trim();
@@ -855,6 +904,21 @@
         if (col.label != null && String(col.label).trim()) return String(col.label).trim();
         if (col.id != null && String(col.id).trim()) return String(col.id).trim();
         return String(col.key || "");
+      }
+
+      function resolveSliceColor(col, record) {
+        const valueKey = labelValueKeyForSlice(col, record);
+        if (valueKey) {
+          const valueColor = state.config.labelValueColors[valueKey];
+          if (typeof valueColor === "string" && /^#[0-9a-fA-F]{6}$/.test(valueColor)) {
+            return valueColor;
+          }
+        }
+        const defaultColor = state.config.customColors[col.key];
+        if (typeof defaultColor === "string" && /^#[0-9a-fA-F]{6}$/.test(defaultColor)) {
+          return defaultColor;
+        }
+        return colorForKey(col.key);
       }
 
       function labelColumnOptionsHtml(selectedId) {
@@ -1205,7 +1269,7 @@
             label: resolveSliceLabel(col, rec),
             columnDescription: typeof col.description === "string" ? col.description : "",
             value: n,
-            color: state.config.customColors[col.key] || colorForKey(col.key)
+            color: resolveSliceColor(col, rec)
           });
         }
         const total = rows.reduce((sum, row) => sum + row.value, 0);
@@ -1220,6 +1284,51 @@
         for (let i = 0; i < key.length; i += 1) hash = ((hash << 5) - hash) + key.charCodeAt(i);
         const idx = Math.abs(hash) % DEFAULT_COLORS.length;
         return DEFAULT_COLORS[idx];
+      }
+
+      /** Live preview for default slice color; skipped when a global label-value color applies. */
+      function previewSliceColor(colKey, hex) {
+        const color = normalizeColor(hex);
+        state.config.customColors[colKey] = color;
+        const rows = state.pieData;
+        const resolved = state.selectedColumnsResolved || [];
+        const rec = state.activeRecord;
+        if (!rows || !rows.length) return;
+        let touched = false;
+        for (let i = 0; i < rows.length; i++) {
+          if (rows[i].key !== colKey) continue;
+          const col = resolved.find(function (c) { return c.key === colKey; });
+          if (col && labelValueKeyForSlice(col, rec)) continue;
+          rows[i].color = color;
+          touched = true;
+        }
+        if (touched) {
+          renderPie(rows);
+          renderLegend(rows);
+        }
+      }
+
+      /** Live preview for global color of the current label value (Ref id or text). */
+      function previewLabelValueColor(valueKey, hex) {
+        const color = normalizeColor(hex);
+        state.config.labelValueColors[valueKey] = color;
+        const rows = state.pieData;
+        const resolved = state.selectedColumnsResolved || [];
+        const rec = state.activeRecord;
+        if (!rows || !rows.length || !rec) return;
+        let touched = false;
+        for (let i = 0; i < rows.length; i++) {
+          const col = resolved.find(function (c) { return c.key === rows[i].key; });
+          if (!col) continue;
+          if (labelValueKeyForSlice(col, rec) === valueKey) {
+            rows[i].color = color;
+            touched = true;
+          }
+        }
+        if (touched) {
+          renderPie(rows);
+          renderLegend(rows);
+        }
       }
 
       function formatNumber(n) {
@@ -1290,6 +1399,18 @@
         return (resolved || []).map((c) => c.key).join("|");
       }
 
+      function selectedConfigRenderSignature(resolved) {
+        let sig = selectedColumnsKeysSignature(resolved);
+        const rec = state.activeRecord;
+        if (!rec) return sig;
+        for (let i = 0; i < (resolved || []).length; i++) {
+          const col = resolved[i];
+          const vk = labelValueKeyForSlice(col, rec);
+          sig += "|" + col.key + ":" + (vk || "");
+        }
+        return sig;
+      }
+
       function fullColumnNameForTip(col) {
         const lab = col.label != null ? String(col.label).trim() : "";
         const id = col.id != null ? String(col.id).trim() : "";
@@ -1354,7 +1475,7 @@
 
       /** Avoid rebuilding label/color inputs on every record update; only when selection changes. */
       function maybeRenderSelectedConfig(resolved) {
-        const sig = selectedColumnsKeysSignature(resolved);
+        const sig = selectedConfigRenderSignature(resolved);
         if (sig === state.lastRenderedSelectedKeysSig) return;
         state.lastRenderedSelectedKeysSig = sig;
         renderSelectedConfig();
@@ -1447,19 +1568,52 @@
             recomputeAndRender();
           });
 
+          const labelColIdForColor = state.config.labelSourceColumns[col.key] || "";
+          const labelRaw = (labelColIdForColor && state.activeRecord)
+            ? getRecordValue(state.activeRecord, labelColIdForColor)
+            : undefined;
+          const labelValueKey = labelValueKeyFromCell(labelRaw);
+          const labelValueDisplay = formatCellAsLabel(labelRaw);
+
           const colorInput = document.createElement("input");
           colorInput.type = "color";
+          colorInput.title = "Default slice color";
           colorInput.value = normalizeColor(state.config.customColors[col.key] || colorForKey(col.key));
-          colorInput.addEventListener("change", () => {
-            state.config.customColors[col.key] = colorInput.value;
-            persistOptions();
-            recomputeAndRender();
+          colorInput.addEventListener("input", function () {
+            previewSliceColor(col.key, colorInput.value);
           });
+          colorInput.addEventListener("change", function () {
+            previewSliceColor(col.key, colorInput.value);
+            persistOptions();
+          });
+
+          const valueColorInput = document.createElement("input");
+          valueColorInput.type = "color";
+          valueColorInput.disabled = !labelValueKey;
+          if (labelValueKey) {
+            valueColorInput.title = "Color for \"" + labelValueDisplay + "\" (global for this value)";
+            valueColorInput.value = normalizeColor(
+              state.config.labelValueColors[labelValueKey] || colorForKey(labelValueKey)
+            );
+            valueColorInput.addEventListener("input", function () {
+              previewLabelValueColor(labelValueKey, valueColorInput.value);
+            });
+            valueColorInput.addEventListener("change", function () {
+              previewLabelValueColor(labelValueKey, valueColorInput.value);
+              persistOptions();
+            });
+          } else {
+            valueColorInput.title = labelColIdForColor
+              ? "No label value on this row"
+              : "Choose a label column first";
+            valueColorInput.value = "#2563eb";
+          }
 
           row.appendChild(name);
           row.appendChild(labelColSelect);
           row.appendChild(labelInput);
           row.appendChild(colorInput);
+          row.appendChild(valueColorInput);
           row.appendChild(handle);
           els.selectedConfig.appendChild(row);
         }
@@ -1706,6 +1860,7 @@
         const customLabels = isPlainObject(incoming.customLabels) ? incoming.customLabels : {};
         const labelSourceColumns = sanitizeLabelSourceColumns(incoming.labelSourceColumns);
         const customColors = isPlainObject(incoming.customColors) ? incoming.customColors : {};
+        const labelValueColors = sanitizeLabelValueColors(incoming.labelValueColors);
         const nextConfig = {
           manualSelections: sanitizeManualSelections(incoming.manualSelections),
           includeRegex: typeof incoming.includeRegex === "string" ? incoming.includeRegex : "",
@@ -1715,6 +1870,7 @@
           customLabels,
           labelSourceColumns,
           customColors,
+          labelValueColors,
           columnDisplayOrder: sanitizeColumnDisplayOrder(incoming.columnDisplayOrder)
         };
         const nextJson = JSON.stringify(nextConfig);
