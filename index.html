@@ -1707,9 +1707,6 @@
           ctx.closePath();
           ctx.fillStyle = row.color;
           ctx.fill();
-          ctx.strokeStyle = "#fff";
-          ctx.lineWidth = 2;
-          ctx.stroke();
 
           state.pieGeometry.push({
             ...row,
@@ -1720,6 +1717,21 @@
             end
           });
           start = end;
+        }
+
+        if (rows.length > 1) {
+          ctx.strokeStyle = "#fff";
+          ctx.lineWidth = 2;
+          ctx.lineJoin = "round";
+          ctx.lineCap = "butt";
+          let sepAngle = -Math.PI / 2;
+          for (const row of rows) {
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(cx + Math.cos(sepAngle) * radius, cy + Math.sin(sepAngle) * radius);
+            ctx.stroke();
+            sepAngle += (row.percentage / 100) * Math.PI * 2;
+          }
         }
 
         let labelStart = -Math.PI / 2;
