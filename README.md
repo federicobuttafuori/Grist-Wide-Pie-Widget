@@ -1,6 +1,6 @@
 # Grist Wide Pie Widget
 
-A custom Grist widget that draws a **pie chart from the row you are viewing**: you choose which numeric columns are slices, and the chart updates with the active record—no reshaping your table first.
+A custom Grist widget that draws a **pie chart from numeric columns of the row you are viewing**, or (optionally) from values across table records—no reshaping your table first.
 
 ## Using the widget in Grist
 
@@ -10,7 +10,9 @@ You do **not** need to publish or install anything yourself if you use the hoste
 
 1. In your Grist document, add a widget to the page and choose **Custom widget** (or **Create custom widget**, depending on your Grist UI).
 2. When asked for the widget URL, **paste the link above** into the **Custom widget URL** field.
-3. Point the widget at the table you want, select the columns that should become slices, and use the chart as you move between rows.
+3. Point the widget at the table you want. Open the widget settings (⚙) and choose **Data mode**:
+   - **Columns of selected record** (default): pick numeric columns as slices; the chart follows the active row.
+   - **Records in the table**: pick a **Value column** and a **Label column**; each visible/filtered row becomes a slice.
 
 If you self-host the files instead, use your own HTTPS URL in the same **Custom widget URL** field.
 
@@ -22,7 +24,7 @@ In standard Grist charts, if you want to see how `Cost_Meat`, `Cost_Shipping`, a
 
 ## What you get
 
-- A pie chart tied to the **current row**; each selected metric is a slice.
+- A pie chart from the **current row** (column slices) or from **all visible rows** (record slices).
 - Legend, colors, and totals so proportions are easy to compare.
 - A good fit for budgets, recipes, cost breakdowns, or any table where many numbers live on the same row.
 
@@ -30,3 +32,4 @@ In standard Grist charts, if you want to see how `Cost_Meat`, `Cost_Shipping`, a
 
 - People who analyze **one row at a time** (e.g. per-product or per-order breakdowns).
 - Anyone who wants a quick visual instead of scanning many numeric cells.
+

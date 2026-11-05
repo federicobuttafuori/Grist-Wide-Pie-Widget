@@ -104,12 +104,20 @@
       color: var(--muted);
       margin-bottom: 4px;
     }
-    input[type="text"] {
+    input[type="text"],
+    .field select {
       width: 100%;
       padding: 7px 8px;
       border: 1px solid var(--border);
       border-radius: 6px;
       background: #fff;
+    }
+    .field select {
+      font-size: 12px;
+      color: var(--fg);
+    }
+    .mode-panel[hidden] {
+      display: none !important;
     }
     #manualSearch {
       margin-bottom: 6px;
@@ -501,6 +509,16 @@
       <div class="panel-body">
       <h1>Wide Row Pie</h1>
       <div class="field">
+        <label for="dataMode">Data mode</label>
+        <select id="dataMode">
+          <option value="columns">Columns of selected record</option>
+          <option value="records">Records in the table</option>
+        </select>
+        <div class="hint">Columns: one row, many numeric fields as slices. Records: one slice per row.</div>
+      </div>
+
+      <div id="columnsModePanel" class="mode-panel">
+      <div class="field">
         <label for="includeRegex">Include regex (optional)</label>
         <input id="includeRegex" type="text" placeholder="^cost_" />
         <div class="hint">Match column names to include.</div>
@@ -519,6 +537,21 @@
 
       <h2>Labels and Colors (selected only)</h2>
       <div id="selectedConfig" class="config-list"></div>
+      </div>
+
+      <div id="recordsModePanel" class="mode-panel" hidden>
+      <h2>Record pie columns</h2>
+      <div class="field">
+        <label for="recordsValueColumn">Value column</label>
+        <select id="recordsValueColumn"></select>
+        <div class="hint">Numeric field used for each slice.</div>
+      </div>
+      <div class="field">
+        <label for="recordsLabelColumn">Label column</label>
+        <select id="recordsLabelColumn"></select>
+        <div class="hint">Text (or any) field used as the slice name.</div>
+      </div>
+      </div>
 
       <h2>Number Formatting</h2>
       <div class="field">
@@ -584,8 +617,12 @@
 
       const state = {
         activeRecord: null,
+        /** Full view/filtered records from grist.onRecords (records mode). */
+        records: [],
         columnsMeta: [],
         config: {
+          /** "columns" = numeric fields of active row (default); "records" = one slice per row. */
+          dataMode: "columns",
           manualSelections: [],
           includeRegex: "",
           excludeRegex: "",
@@ -598,7 +635,11 @@
           /** Global: label value key (ref:id or lbl:text) → color. */
           labelValueColors: {},
           /** Order of column keys for pie, legend, and the selected-columns list UI. */
-          columnDisplayOrder: []
+          columnDisplayOrder: [],
+          /** Records mode: column id for slice values. */
+          recordsValueColumn: "",
+          /** Records mode: column id for slice labels. */
+          recordsLabelColumn: ""
         },
         validationErrors: { includeRegex: "", excludeRegex: "" },
         selectedColumnsResolved: [],
@@ -626,6 +667,11 @@
 
       const els = {
         app: document.querySelector(".app"),
+        dataMode: document.getElementById("dataMode"),
+        columnsModePanel: document.getElementById("columnsModePanel"),
+        recordsModePanel: document.getElementById("recordsModePanel"),
+        recordsValueColumn: document.getElementById("recordsValueColumn"),
+        recordsLabelColumn: document.getElementById("recordsLabelColumn"),
         includeRegex: document.getElementById("includeRegex"),
         excludeRegex: document.getElementById("excludeRegex"),
         numberPrefix: document.getElementById("numberPrefix"),
@@ -687,8 +733,18 @@
         const meta = state.columnsMeta.length;
         const rows = state.pieData || [];
         const total = rows.reduce((s, r) => s + (Number(r.value) || 0), 0);
+        const mode = sanitizeDataMode(state.config.dataMode);
         let chartLine = "Chart —";
-        if (!state.activeRecord) {
+        if (mode === "records") {
+          const nRec = (state.records || []).length;
+          if (!nRec) {
+            chartLine = "Chart — (waiting for records)";
+          } else if (rows.length) {
+            chartLine = "Chart " + rows.length + " slices · total " + formatNumber(total);
+          } else {
+            chartLine = "Chart — (no numeric record slices)";
+          }
+        } else if (!state.activeRecord) {
           chartLine = "Chart — (waiting for row)";
         } else if (rows.length) {
           chartLine = "Chart " + rows.length + " slices · total " + formatNumber(total);
@@ -697,9 +753,13 @@
         } else {
           chartLine = "Chart — (no columns selected)";
         }
+        const modeLabel = mode === "records" ? "records" : "columns";
+        const rowBit = mode === "records"
+          ? ((state.records || []).length + " rows")
+          : ("Row " + (rid != null && rid !== undefined ? String(rid) : "—") + " · " + resolved + " in pie");
         els.debugSummary.textContent = [
-          (state.isBuilderHost ? "Builder" : "Page") + " · options " + persist,
-          "Row " + (rid != null && rid !== undefined ? String(rid) : "—") + " · " + resolved + " in pie · " + meta + " cols in meta",
+          (state.isBuilderHost ? "Builder" : "Page") + " · options " + persist + " · mode " + modeLabel,
+          rowBit + " · " + meta + " cols in meta",
           chartLine,
           "Version v" + WIDGET_VERSION
         ].join("\n");
@@ -714,8 +774,17 @@
         return !!value && typeof value === "object" && !Array.isArray(value);
       }
 
+      function sanitizeDataMode(value) {
+        return value === "records" ? "records" : "columns";
+      }
+
+      function sanitizeColumnIdOption(value) {
+        return typeof value === "string" ? value.trim() : "";
+      }
+
       function buildSerializableConfig() {
         return {
+          dataMode: sanitizeDataMode(state.config.dataMode),
           manualSelections: sanitizeManualSelections(state.config.manualSelections),
           includeRegex: typeof state.config.includeRegex === "string" ? state.config.includeRegex : "",
           excludeRegex: typeof state.config.excludeRegex === "string" ? state.config.excludeRegex : "",
@@ -725,7 +794,9 @@
           labelSourceColumns: sanitizeLabelSourceColumns(state.config.labelSourceColumns),
           customColors: isPlainObject(state.config.customColors) ? state.config.customColors : {},
           labelValueColors: sanitizeLabelValueColors(state.config.labelValueColors),
-          columnDisplayOrder: sanitizeColumnDisplayOrder(state.config.columnDisplayOrder)
+          columnDisplayOrder: sanitizeColumnDisplayOrder(state.config.columnDisplayOrder),
+          recordsValueColumn: sanitizeColumnIdOption(state.config.recordsValueColumn),
+          recordsLabelColumn: sanitizeColumnIdOption(state.config.recordsLabelColumn)
         };
       }
 
@@ -1285,6 +1356,59 @@
           row.percentage = total > 0 ? (row.value / total) * 100 : 0;
         }
         return { rows, total };
+      }
+
+      function resolveRecordsSliceColor(record, labelRaw, sliceKey) {
+        const valueKey = labelValueKeyFromCell(labelRaw);
+        if (valueKey) {
+          const valueColor = state.config.labelValueColors[valueKey];
+          if (typeof valueColor === "string" && /^#[0-9a-fA-F]{6}$/.test(valueColor)) {
+            return valueColor;
+          }
+        }
+        const defaultColor = state.config.customColors[sliceKey];
+        if (typeof defaultColor === "string" && /^#[0-9a-fA-F]{6}$/.test(defaultColor)) {
+          return defaultColor;
+        }
+        return colorForKey(sliceKey);
+      }
+
+      /** One slice per record using configured value + label columns (same numeric rules as columns mode). */
+      function buildPieDataFromRecords() {
+        const valueCol = sanitizeColumnIdOption(state.config.recordsValueColumn);
+        const labelCol = sanitizeColumnIdOption(state.config.recordsLabelColumn);
+        const rows = [];
+        if (!valueCol) return { rows, total: 0, missingValueColumn: true, missingLabelColumn: !labelCol };
+
+        const list = Array.isArray(state.records) ? state.records : [];
+        for (let i = 0; i < list.length; i++) {
+          const rec = list[i];
+          if (!rec) continue;
+          const rawValue = getRecordValue(rec, valueCol);
+          const n = normalizeNumber(rawValue);
+          if (n === null) continue;
+          if (n === 0) continue;
+          const rowId = getRecordRowId(rec);
+          const sliceKey = rowId != null && rowId !== undefined ? ("row:" + String(rowId)) : ("idx:" + String(i));
+          const labelRaw = labelCol ? getRecordValue(rec, labelCol) : undefined;
+          let label = labelCol ? formatCellAsLabel(labelRaw) : "";
+          if (!label) {
+            label = rowId != null && rowId !== undefined ? ("Row " + String(rowId)) : ("Row " + String(i + 1));
+          }
+          rows.push({
+            key: sliceKey,
+            columnId: valueCol,
+            label: label,
+            columnDescription: "",
+            value: n,
+            color: resolveRecordsSliceColor(rec, labelRaw, sliceKey)
+          });
+        }
+        const total = rows.reduce((sum, row) => sum + row.value, 0);
+        for (const row of rows) {
+          row.percentage = total > 0 ? (row.value / total) * 100 : 0;
+        }
+        return { rows, total, missingValueColumn: false, missingLabelColumn: !labelCol };
       }
 
       function colorForKey(key) {
@@ -1891,6 +2015,7 @@
         const customColors = isPlainObject(incoming.customColors) ? incoming.customColors : {};
         const labelValueColors = sanitizeLabelValueColors(incoming.labelValueColors);
         const nextConfig = {
+          dataMode: sanitizeDataMode(incoming.dataMode),
           manualSelections: sanitizeManualSelections(incoming.manualSelections),
           includeRegex: typeof incoming.includeRegex === "string" ? incoming.includeRegex : "",
           excludeRegex: typeof incoming.excludeRegex === "string" ? incoming.excludeRegex : "",
@@ -1900,7 +2025,9 @@
           labelSourceColumns,
           customColors,
           labelValueColors,
-          columnDisplayOrder: sanitizeColumnDisplayOrder(incoming.columnDisplayOrder)
+          columnDisplayOrder: sanitizeColumnDisplayOrder(incoming.columnDisplayOrder),
+          recordsValueColumn: sanitizeColumnIdOption(incoming.recordsValueColumn),
+          recordsLabelColumn: sanitizeColumnIdOption(incoming.recordsLabelColumn)
         };
         const nextJson = JSON.stringify(nextConfig);
         if (nextJson === state.lastAppliedOptionsJson) return;
@@ -1910,10 +2037,13 @@
         // Do not clear lastRenderedSelectedKeysSig here: grist.onOptions echoes every save and would
         // rebuild the selected-column rows, destroying focused label inputs (mobile keyboard closes).
         // maybeRenderSelectedConfig already refreshes when resolved column keys/order change.
+        if (els.dataMode) els.dataMode.value = state.config.dataMode;
         els.includeRegex.value = state.config.includeRegex;
         els.excludeRegex.value = state.config.excludeRegex;
         els.numberPrefix.value = state.config.numberPrefix;
         els.numberDecimals.value = String(state.config.numberDecimals);
+        updateModePanels();
+        renderRecordsColumnSelectors();
         state.isApplyingRemoteOptions = false;
       }
 
@@ -1986,58 +2116,156 @@
         }
       }
 
+      function isRecordsMode() {
+        return sanitizeDataMode(state.config.dataMode) === "records";
+      }
+
+      function updateModePanels() {
+        const records = isRecordsMode();
+        if (els.columnsModePanel) els.columnsModePanel.hidden = records;
+        if (els.recordsModePanel) els.recordsModePanel.hidden = !records;
+        if (els.dataMode) els.dataMode.value = sanitizeDataMode(state.config.dataMode);
+      }
+
+      function columnOptionsHtml(selectedId, emptyLabel) {
+        const cols = (state.columnsMeta || []).slice().sort(function (a, b) {
+          return String(a.label || a.id).localeCompare(String(b.label || b.id));
+        });
+        const knownIds = new Set(cols.map(function (m) { return String(m.id); }));
+        let html = '<option value="">' + escapeHtmlAttr(emptyLabel || "Select column") + '</option>';
+        if (selectedId && !knownIds.has(selectedId)) {
+          html += '<option value="' + escapeHtmlAttr(selectedId) + '" selected>' + escapeHtmlAttr(selectedId) + '</option>';
+        }
+        for (let i = 0; i < cols.length; i++) {
+          const m = cols[i];
+          const id = String(m.id);
+          const lab = String(m.label || m.id);
+          const sel = id === selectedId ? ' selected' : '';
+          html += '<option value="' + escapeHtmlAttr(id) + '"' + sel + '>' + escapeHtmlAttr(lab) + '</option>';
+        }
+        return html;
+      }
+
+      function renderRecordsColumnSelectors() {
+        if (!els.recordsValueColumn || !els.recordsLabelColumn) return;
+        const valueId = sanitizeColumnIdOption(state.config.recordsValueColumn);
+        const labelId = sanitizeColumnIdOption(state.config.recordsLabelColumn);
+        els.recordsValueColumn.innerHTML = columnOptionsHtml(valueId, "Select value column");
+        els.recordsLabelColumn.innerHTML = columnOptionsHtml(labelId, "Select label column");
+      }
+
+      function adoptRecordsList(records) {
+        const list = Array.isArray(records) ? records : [];
+        state.records = list;
+        if (!list.length) return;
+        // Enrich column meta from the first few rows so selectors stay populated in records mode.
+        const sample = list.slice(0, Math.min(list.length, 20));
+        for (let i = 0; i < sample.length; i++) {
+          if (!state.columnsMeta.length) {
+            state.columnsMeta = buildMetaFromRecord(sample[i]);
+          } else {
+            syncColumnsMetaWithRecord(sample[i]);
+          }
+        }
+      }
+
+      function recomputeAndRenderColumnsMode() {
+        if (!state.activeRecord) {
+          renderStatus("Waiting for active record...");
+          renderLegend([]);
+          renderPie([]);
+          els.meta.textContent = "";
+          renderManualSelection();
+          maybeRenderSelectedConfig(state.selectedColumnsResolved);
+          return;
+        }
+
+        reconcileManualSelectionsWithCurrentColumns();
+        const resolution = getResolvedColumns();
+        state.selectedColumnsResolved = resolution.resolved;
+        renderManualSelection();
+        maybeRenderSelectedConfig(resolution.resolved);
+
+        if (resolution.blockedByRegexError) {
+          renderStatus("Fix regex errors to compute the chart.");
+          renderLegend([]);
+          renderPie([]);
+          els.meta.textContent = "";
+          return;
+        }
+
+        if (!resolution.resolved.length) {
+          renderStatus("No columns selected after manual + include - exclude filters.");
+          renderLegend([]);
+          renderPie([]);
+          els.meta.textContent = "";
+          return;
+        }
+
+        const result = buildPieData(resolution.resolved);
+        state.pieData = result.rows;
+        if (!result.rows.length) {
+          renderStatus("All selected values are empty, non-numeric, null, or zero.");
+          renderLegend([]);
+          renderPie([]);
+          els.meta.textContent = "";
+          return;
+        }
+
+        renderStatus("Showing " + result.rows.length + " categories from active record.");
+        renderPie(result.rows);
+        renderLegend(result.rows);
+        const orphanInfo = state.orphanSelections.length
+          ? " | Orphan manual selections: " + state.orphanSelections.join(", ")
+          : "";
+        els.meta.textContent = "Total: " + formatNumber(result.total) + orphanInfo;
+      }
+
+      function recomputeAndRenderRecordsMode() {
+        renderRecordsColumnSelectors();
+        const result = buildPieDataFromRecords();
+        state.pieData = result.rows;
+
+        if (result.missingValueColumn) {
+          renderStatus("Choose a value column for records mode.");
+          renderLegend([]);
+          renderPie([]);
+          els.meta.textContent = "";
+          return;
+        }
+
+        if (!(state.records || []).length) {
+          renderStatus("Waiting for table records...");
+          renderLegend([]);
+          renderPie([]);
+          els.meta.textContent = "";
+          return;
+        }
+
+        if (!result.rows.length) {
+          renderStatus("All record values are empty, non-numeric, null, or zero.");
+          renderLegend([]);
+          renderPie([]);
+          els.meta.textContent = "";
+          return;
+        }
+
+        renderStatus("Showing " + result.rows.length + " categories from table records.");
+        renderPie(result.rows);
+        renderLegend(result.rows);
+        els.meta.textContent = "Total: " + formatNumber(result.total)
+          + " (" + result.rows.length + " of " + (state.records || []).length + " records)";
+      }
+
       function recomputeAndRender() {
         try {
           state.pieData = [];
-          if (!state.activeRecord) {
-            renderStatus("Waiting for active record...");
-            renderLegend([]);
-            renderPie([]);
-            els.meta.textContent = "";
-            renderManualSelection();
-            maybeRenderSelectedConfig(state.selectedColumnsResolved);
-            return;
+          updateModePanels();
+          if (isRecordsMode()) {
+            recomputeAndRenderRecordsMode();
+          } else {
+            recomputeAndRenderColumnsMode();
           }
-
-          reconcileManualSelectionsWithCurrentColumns();
-          const resolution = getResolvedColumns();
-          state.selectedColumnsResolved = resolution.resolved;
-          renderManualSelection();
-          maybeRenderSelectedConfig(resolution.resolved);
-
-          if (resolution.blockedByRegexError) {
-            renderStatus("Fix regex errors to compute the chart.");
-            renderLegend([]);
-            renderPie([]);
-            els.meta.textContent = "";
-            return;
-          }
-
-          if (!resolution.resolved.length) {
-            renderStatus("No columns selected after manual + include - exclude filters.");
-            renderLegend([]);
-            renderPie([]);
-            els.meta.textContent = "";
-            return;
-          }
-
-          const result = buildPieData(resolution.resolved);
-          state.pieData = result.rows;
-          if (!result.rows.length) {
-            renderStatus("All selected values are empty, non-numeric, null, or zero.");
-            renderLegend([]);
-            renderPie([]);
-            els.meta.textContent = "";
-            return;
-          }
-
-          renderStatus("Showing " + result.rows.length + " categories from active record.");
-          renderPie(result.rows);
-          renderLegend(result.rows);
-          const orphanInfo = state.orphanSelections.length
-            ? " | Orphan manual selections: " + state.orphanSelections.join(", ")
-            : "";
-          els.meta.textContent = "Total: " + formatNumber(result.total) + orphanInfo;
         } catch (err) {
           console.error("Widget render error", err);
           renderStatus("Widget error: " + (err && err.message ? err.message : "Unknown error"));
@@ -2215,6 +2443,28 @@
       function wireInputs() {
         if (state.inputsWired) return;
         state.inputsWired = true;
+        if (els.dataMode) {
+          els.dataMode.addEventListener("change", () => {
+            state.config.dataMode = sanitizeDataMode(els.dataMode.value);
+            updateModePanels();
+            persistOptions();
+            recomputeAndRender();
+          });
+        }
+        if (els.recordsValueColumn) {
+          els.recordsValueColumn.addEventListener("change", () => {
+            state.config.recordsValueColumn = sanitizeColumnIdOption(els.recordsValueColumn.value);
+            persistOptions();
+            recomputeAndRender();
+          });
+        }
+        if (els.recordsLabelColumn) {
+          els.recordsLabelColumn.addEventListener("change", () => {
+            state.config.recordsLabelColumn = sanitizeColumnIdOption(els.recordsLabelColumn.value);
+            persistOptions();
+            recomputeAndRender();
+          });
+        }
         els.includeRegex.addEventListener("input", () => {
           state.config.includeRegex = els.includeRegex.value;
           persistOptions();
@@ -2338,8 +2588,14 @@
         if (typeof grist.onRecords === "function") {
           grist.onRecords((records) => {
             const list = Array.isArray(records) ? records : [];
-            const first = list.length > 0 ? list[0] : null;
-            adoptActiveRecord(first);
+            adoptRecordsList(list);
+            // Keep columns-mode fallback when onRecord is unavailable or delayed.
+            if (!state.activeRecord && list.length > 0) {
+              adoptActiveRecord(list[0]);
+            } else if (list.length && state.columnsMeta.length === 0) {
+              adoptActiveRecord(list[0]);
+            }
+            renderRecordsColumnSelectors();
             recomputeAndRender();
           });
         }
@@ -2352,6 +2608,8 @@
           const localOptions = loadLocalOptions();
           if (localOptions) applyLoadedOptions(localOptions);
         }
+        updateModePanels();
+        renderRecordsColumnSelectors();
         if (!state.uiShellWired) {
           wireInputs();
           wirePanelResize();
@@ -2361,6 +2619,7 @@
         }
         wireGrist();
         await tryLoadColumnsMeta();
+        renderRecordsColumnSelectors();
         recomputeAndRender();
         els.debugToggle.style.display = state.settingsVisible ? "flex" : "none";
       }
