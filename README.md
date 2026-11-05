@@ -12,7 +12,7 @@ You do **not** need to publish or install anything yourself if you use the hoste
 2. When asked for the widget URL, **paste the link above** into the **Custom widget URL** field.
 3. Point the widget at the table you want. Open the widget settings (⚙) and choose **Data mode**:
    - **Columns of selected record** (default): pick numeric columns as slices; the chart follows the active row.
-   - **Records in the table**: pick a **Value column** and a **Label column**; each visible/filtered row becomes a slice.
+   - **Records in the table**: pick a **Value column** and a **Label column**; each visible/filtered row becomes a slice. **Labels and Colors** then lists one row per slice for label overrides, colors, and drag order.
 
 If you self-host the files instead, use your own HTTPS URL in the same **Custom widget URL** field.
 

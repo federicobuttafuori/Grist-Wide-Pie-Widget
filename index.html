@@ -535,8 +535,6 @@
       <input id="manualSearch" type="text" placeholder="Search columns..." />
       <div id="manualColumns" class="columns-box"></div>
 
-      <h2>Labels and Colors (selected only)</h2>
-      <div id="selectedConfig" class="config-list"></div>
       </div>
 
       <div id="recordsModePanel" class="mode-panel" hidden>
@@ -552,6 +550,9 @@
         <div class="hint">Text (or any) field used as the slice name.</div>
       </div>
       </div>
+
+      <h2>Labels and Colors (selected only)</h2>
+      <div id="selectedConfig" class="config-list"></div>
 
       <h2>Number Formatting</h2>
       <div class="field">
@@ -815,12 +816,16 @@
       }
 
       /** Keep saved order for existing keys; append newly selected keys at the end (sorted by key for stability). */
+      function isRecordSliceKey(key) {
+        return typeof key === "string" && (key.indexOf("row:") === 0 || key.indexOf("idx:") === 0);
+      }
+
       function mergeColumnDisplayOrder(allKeys) {
         const set = new Set(allKeys);
         const prev = sanitizeColumnDisplayOrder(state.config.columnDisplayOrder);
         const next = [];
         for (let i = 0; i < prev.length; i++) {
-          if (set.has(prev[i])) next.push(prev[i]);
+          if (set.has(prev[i]) || isRecordSliceKey(prev[i])) next.push(prev[i]);
         }
         const missing = [];
         for (let i = 0; i < allKeys.length; i++) {
@@ -846,7 +851,18 @@
         });
       }
 
+      /** Records mode: store the current slice order (columns keys untouched) so a drag has a full order to edit. */
+      function seedRecordsDisplayOrder() {
+        const prev = sanitizeColumnDisplayOrder(state.config.columnDisplayOrder);
+        const keep = prev.filter(function (k) { return !isRecordSliceKey(k); });
+        const sliceKeys = (state.pieData || []).map(function (r) { return r.key; });
+        state.config.columnDisplayOrder = keep.concat(sliceKeys);
+      }
+
       function reorderColumnDisplayOrder(fromKey, toKey) {
+        if (isRecordsMode() && isRecordSliceKey(fromKey) && isRecordSliceKey(toKey)) {
+          seedRecordsDisplayOrder();
+        }
         const order = sanitizeColumnDisplayOrder(state.config.columnDisplayOrder).slice();
         const from = order.indexOf(fromKey);
         let to = order.indexOf(toKey);
@@ -1373,6 +1389,25 @@
         return colorForKey(sliceKey);
       }
 
+      /**
+       * Records mode order: table order by default; once slices were dragged, saved columnDisplayOrder wins
+       * and records not in it yet keep table order after the saved ones.
+       */
+      function sortRecordRowsByDisplayOrder(rows) {
+        const order = sanitizeColumnDisplayOrder(state.config.columnDisplayOrder);
+        const orderMap = new Map();
+        for (let i = 0; i < order.length; i++) {
+          if (isRecordSliceKey(order[i])) orderMap.set(order[i], i);
+        }
+        if (!orderMap.size) return;
+        rows.sort(function (a, b) {
+          const ia = orderMap.has(a.key) ? orderMap.get(a.key) : 1e9;
+          const ib = orderMap.has(b.key) ? orderMap.get(b.key) : 1e9;
+          if (ia !== ib) return ia - ib;
+          return a._naturalIndex - b._naturalIndex;
+        });
+      }
+
       /** One slice per record using configured value + label columns (same numeric rules as columns mode). */
       function buildPieDataFromRecords() {
         const valueCol = sanitizeColumnIdOption(state.config.recordsValueColumn);
@@ -1391,7 +1426,9 @@
           const rowId = getRecordRowId(rec);
           const sliceKey = rowId != null && rowId !== undefined ? ("row:" + String(rowId)) : ("idx:" + String(i));
           const labelRaw = labelCol ? getRecordValue(rec, labelCol) : undefined;
-          let label = labelCol ? formatCellAsLabel(labelRaw) : "";
+          const custom = state.config.customLabels[sliceKey];
+          let label = (typeof custom === "string" && custom.trim()) ? custom.trim() : "";
+          if (!label && labelCol) label = formatCellAsLabel(labelRaw);
           if (!label) {
             label = rowId != null && rowId !== undefined ? ("Row " + String(rowId)) : ("Row " + String(i + 1));
           }
@@ -1399,11 +1436,14 @@
             key: sliceKey,
             columnId: valueCol,
             label: label,
+            labelRaw: labelRaw,
             columnDescription: "",
             value: n,
-            color: resolveRecordsSliceColor(rec, labelRaw, sliceKey)
+            color: resolveRecordsSliceColor(rec, labelRaw, sliceKey),
+            _naturalIndex: rows.length
           });
         }
+        sortRecordRowsByDisplayOrder(rows);
         const total = rows.reduce((sum, row) => sum + row.value, 0);
         for (const row of rows) {
           row.percentage = total > 0 ? (row.value / total) * 100 : 0;
@@ -1427,6 +1467,21 @@
         const rec = state.activeRecord;
         if (!rows || !rows.length) return;
         let touched = false;
+        if (isRecordsMode()) {
+          for (let i = 0; i < rows.length; i++) {
+            if (rows[i].key !== colKey) continue;
+            const vk = labelValueKeyFromCell(rows[i].labelRaw);
+            const saved = vk ? state.config.labelValueColors[vk] : "";
+            if (typeof saved === "string" && /^#[0-9a-fA-F]{6}$/.test(saved)) continue;
+            rows[i].color = color;
+            touched = true;
+          }
+          if (touched) {
+            renderPie(rows);
+            renderLegend(rows);
+          }
+          return;
+        }
         for (let i = 0; i < rows.length; i++) {
           if (rows[i].key !== colKey) continue;
           const col = resolved.find(function (c) { return c.key === colKey; });
@@ -1447,6 +1502,21 @@
         const rows = state.pieData;
         const resolved = state.selectedColumnsResolved || [];
         const rec = state.activeRecord;
+        if (isRecordsMode()) {
+          if (!rows || !rows.length) return;
+          let touchedRecords = false;
+          for (let i = 0; i < rows.length; i++) {
+            if (labelValueKeyFromCell(rows[i].labelRaw) === valueKey) {
+              rows[i].color = color;
+              touchedRecords = true;
+            }
+          }
+          if (touchedRecords) {
+            renderPie(rows);
+            renderLegend(rows);
+          }
+          return;
+        }
         if (!rows || !rows.length || !rec) return;
         let touched = false;
         for (let i = 0; i < rows.length; i++) {
@@ -1532,6 +1602,16 @@
       }
 
       function selectedConfigRenderSignature(resolved) {
+        if (isRecordsMode()) {
+          let rsig = "records|" + sanitizeColumnIdOption(state.config.recordsValueColumn)
+            + "|" + sanitizeColumnIdOption(state.config.recordsLabelColumn);
+          const prows = state.pieData || [];
+          for (let i = 0; i < prows.length; i++) {
+            const r = prows[i];
+            rsig += "|" + r.key + ":" + (labelValueKeyFromCell(r.labelRaw) || "");
+          }
+          return rsig;
+        }
         let sig = selectedColumnsKeysSignature(resolved);
         const rec = state.activeRecord;
         if (!rec) return sig;
@@ -1614,6 +1694,10 @@
       }
 
       function renderSelectedConfig() {
+        if (isRecordsMode()) {
+          renderRecordsSelectedConfig();
+          return;
+        }
         const selected = state.selectedColumnsResolved || [];
         if (!selected.length) {
           els.selectedConfig.innerHTML = "<div class='hint'>Select at least one column first.</div>";
@@ -1744,6 +1828,148 @@
             });
           } else {
             valueColorInput.title = labelColIdForColor
+              ? "No label value on this row"
+              : "Choose a label column first";
+            valueColorInput.value = "#ffffff";
+            valueColorInput.classList.add("config-value-color--unset");
+          }
+
+          row.appendChild(name);
+          row.appendChild(labelColSelect);
+          row.appendChild(labelInput);
+          row.appendChild(colorInput);
+          row.appendChild(valueColorInput);
+          row.appendChild(handle);
+          els.selectedConfig.appendChild(row);
+        }
+      }
+
+      /** Records mode: one row per record slice, same .config-row grid as columns mode. */
+      function renderRecordsSelectedConfig() {
+        const slices = state.pieData || [];
+        if (!slices.length) {
+          const msg = sanitizeColumnIdOption(state.config.recordsValueColumn)
+            ? "No record slices to label yet."
+            : "Choose a value column first.";
+          els.selectedConfig.innerHTML = "<div class='hint'>" + msg + "</div>";
+          return;
+        }
+        const labelColId = sanitizeColumnIdOption(state.config.recordsLabelColumn);
+
+        els.selectedConfig.innerHTML = "";
+        for (const slice of slices) {
+          const sliceKey = slice.key;
+          const row = document.createElement("div");
+          row.className = "config-row";
+          row.dataset.colKey = sliceKey;
+
+          const handle = document.createElement("span");
+          handle.className = "config-drag-handle";
+          handle.textContent = "\u22EE";
+          handle.title = "Trascina per riordinare";
+          handle.setAttribute("aria-label", "Trascina per riordinare");
+          handle.setAttribute("draggable", "true");
+          handle.addEventListener("dragstart", function (e) {
+            e.dataTransfer.setData("text/plain", sliceKey);
+            e.dataTransfer.effectAllowed = "move";
+            row.classList.add("config-row--dragging");
+          });
+          handle.addEventListener("dragend", function () {
+            row.classList.remove("config-row--dragging");
+          });
+          row.addEventListener("dragover", function (e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+          });
+          row.addEventListener("drop", function (e) {
+            e.preventDefault();
+            const fromKey = e.dataTransfer.getData("text/plain");
+            const toKey = row.dataset.colKey;
+            if (fromKey && toKey && fromKey !== toKey) {
+              reorderColumnDisplayOrder(fromKey, toKey);
+            }
+          });
+
+          const name = document.createElement("div");
+          const fullName = String(slice.label) + " \u00B7 " + sliceKey;
+          name.className = "name config-col-name";
+          name.textContent = slice.label;
+          name.title = fullName;
+          name.setAttribute("aria-label", "Record: " + fullName + ". Clic o Invio per mostrare il nome completo.");
+          name.tabIndex = 0;
+          name.addEventListener("click", function (e) {
+            e.stopPropagation();
+            showColumnNameTip(fullName, name);
+          });
+          name.addEventListener("keydown", function (e) {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              e.stopPropagation();
+              showColumnNameTip(fullName, name);
+            }
+          });
+
+          const labelColSelect = document.createElement("select");
+          labelColSelect.title = "Label column is set above";
+          labelColSelect.setAttribute("draggable", "false");
+          labelColSelect.innerHTML = labelColumnOptionsHtml(labelColId);
+          labelColSelect.disabled = true;
+
+          const labelInput = document.createElement("input");
+          labelInput.type = "text";
+          labelInput.placeholder = "Override label";
+          labelInput.title = "Overrides record label when set";
+          labelInput.setAttribute("draggable", "false");
+          labelInput.value = state.config.customLabels[sliceKey] || "";
+          labelInput.addEventListener("input", () => {
+            const val = labelInput.value.trim();
+            if (val) state.config.customLabels[sliceKey] = val;
+            else delete state.config.customLabels[sliceKey];
+            persistOptions();
+            recomputeAndRender();
+          });
+
+          const labelRaw = slice.labelRaw;
+          const labelValueKey = labelValueKeyFromCell(labelRaw);
+          const labelValueDisplay = formatCellAsLabel(labelRaw);
+
+          const colorInput = document.createElement("input");
+          colorInput.type = "color";
+          colorInput.title = "Default slice color";
+          colorInput.value = normalizeColor(state.config.customColors[sliceKey] || colorForKey(sliceKey));
+          colorInput.addEventListener("input", function () {
+            previewSliceColor(sliceKey, colorInput.value);
+          });
+          colorInput.addEventListener("change", function () {
+            previewSliceColor(sliceKey, colorInput.value);
+            persistOptions();
+          });
+
+          const valueColorInput = document.createElement("input");
+          valueColorInput.type = "color";
+          valueColorInput.className = "config-value-color";
+          valueColorInput.disabled = !labelValueKey;
+          const savedValueColor = labelValueKey ? state.config.labelValueColors[labelValueKey] : "";
+          const hasSavedValueColor = typeof savedValueColor === "string" && /^#[0-9a-fA-F]{6}$/.test(savedValueColor);
+          if (labelValueKey) {
+            valueColorInput.title = "Color for \"" + labelValueDisplay + "\" (global for this value)";
+            if (hasSavedValueColor) {
+              valueColorInput.value = normalizeColor(savedValueColor);
+            } else {
+              valueColorInput.value = "#ffffff";
+              valueColorInput.classList.add("config-value-color--unset");
+            }
+            valueColorInput.addEventListener("input", function () {
+              valueColorInput.classList.remove("config-value-color--unset");
+              previewLabelValueColor(labelValueKey, valueColorInput.value);
+            });
+            valueColorInput.addEventListener("change", function () {
+              valueColorInput.classList.remove("config-value-color--unset");
+              previewLabelValueColor(labelValueKey, valueColorInput.value);
+              persistOptions();
+            });
+          } else {
+            valueColorInput.title = labelColId
               ? "No label value on this row"
               : "Choose a label column first";
             valueColorInput.value = "#ffffff";
@@ -2225,6 +2451,7 @@
         renderRecordsColumnSelectors();
         const result = buildPieDataFromRecords();
         state.pieData = result.rows;
+        maybeRenderSelectedConfig(null);
 
         if (result.missingValueColumn) {
           renderStatus("Choose a value column for records mode.");
